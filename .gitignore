@@ -1,0 +1,40 @@
+# Environment and secrets — never commit these
+.env
+.env.*
+!.env.example
+
+# Database files — personal data stays on the server, not in the repo
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Backups
+*.bak
+
+# Dev utilities — not for public repo
+spread_commits.py
+rebuild_history.py
