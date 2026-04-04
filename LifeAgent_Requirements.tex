@@ -1,0 +1,99 @@
+\documentclass[12pt, a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{fontenc}
+\usepackage{inputenc}
+\usepackage{parskip}
+\usepackage{listings}
+\usepackage{mdframed}
+
+\definecolor{accent}{RGB}{30, 30, 30}
+\definecolor{lightgray}{RGB}{245, 245, 245}
+\definecolor{midgray}{RGB}{120, 120, 120}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=accent,
+    urlcolor=accent
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\textcolor{midgray}{\small Life Agent --- Requirements \& Architecture}}
+\lhead{\textcolor{midgray}{\small Mahir}}
+\rfoot{\textcolor{midgray}{\small \thepage}}
+
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries}{}{0em}{}
+
+\lstset{
+    backgroundcolor=\color{lightgray},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    framerule=0pt,
+    rulecolor=\color{lightgray}
+}
+
+\begin{document}
+
+% ─── TITLE PAGE ───────────────────────────────────────────────────────────────
+\begin{titlepage}
+    \centering
+    \vspace*{3cm}
+    {\Huge\bfseries The Life Agent\par}
+    \vspace{0.5cm}
+    {\large\textcolor{midgray}{Personal AI Accountability System}\par}
+    \vspace{1.5cm}
+    {\normalsize Requirements, Architecture \& Build Plan\par}
+    \vspace{0.5cm}
+    {\small\textcolor{midgray}{Prepared for: Mahir\par}}
+    \vspace{0.3cm}
+    {\small\textcolor{midgray}{Date: May 2026\par}}
+    \vfill
+    \begin{mdframed}[backgroundcolor=lightgray, linecolor=lightgray]
+    \centering
+    \small\textit{This document is a living brief. When handed to an AI agent, it should:\\
+    (1) read and absorb everything here, (2) ask the onboarding questions in Section 9,\\
+    (3) confirm the build plan, and (4) begin development.}
+    \end{mdframed}
+\end{titlepage}
+
+% ─── TABLE OF CONTENTS ────────────────────────────────────────────────────────
+\tableofcontents
+\newpage
+
+% ─── SECTION 1: VISION ────────────────────────────────────────────────────────
+\section{Vision \& Purpose}
+
+\textbf{The Life Agent} is a personal AI system designed to act as Mahir's accountability partner, life coach, and data-driven advisor --- available 24/7 via Telegram.
+
+The core insight motivating this system: most habit and productivity tools fail because they are \textit{passive}. The user must remember to open them. The Life Agent is \textit{active} --- it initiates contact, asks questions, notices patterns, and calls out inconsistencies based on real logged history. It cannot be bullshitted.
+
+\textbf{What it replaces:}
+\begin{itemize}[noitemsep]
+    \item A personal trainer (fitness accountability)
+    \item A nutritionist (food tracking and guidance)
+    \item A life coach (goal setting, direction, tough conversations)
+    \item A financial advisor (spending patterns, savings discipline)
+    \item A study partner (CFA prep, books, learning accountability)
+    \item A scheduler (time management and life planning)
+    \item A journal (longitudinal record of where Mahir has been)
+\end{itemize}
+
+\textbf{What it does not replace:}
+\begin{itemize}[noitemsep]
+    \item Mahir's own will and decision to show up
+\end{itemize}
+
+The agent's value compounds over time. After 3 months of logs, it knows patterns the user cannot see himself. After 12 months, it can project where consistent behaviour leads.
+
+\end{document}
