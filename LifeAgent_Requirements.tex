@@ -128,4 +128,29 @@ The agent's advice and default reasoning should be grounded in the following fra
     \item Discomfort is the signal that growth is happening
 \end{itemize}
 
+% ─── SECTION 3: FEATURE LIST ──────────────────────────────────────────────────
+\section{Feature List}
+
+\subsection{Core Features (Phase 1 --- Build First)}
+
+\begin{longtable}{>{\bfseries}p{4cm} p{10cm}}
+\toprule
+Feature & Description \\
+\midrule
+Morning Check-In & Automated message at Mahir's preferred wake time. Pulls yesterday's performance from DB, today's schedule/events, and asks: what are the priorities for today? Voice or text reply. \\
+\addlinespace
+Evening Review & Automated message at night. Covers: gym, food, mood (1--10), spend, study, anything notable. One conversation captures all daily logs. \\
+\addlinespace
+Habit Logging & Quick commands: \texttt{/done gym}, \texttt{/log food}, etc. Inline Telegram buttons for yes/no habits. Updates streak counters. \\
+\addlinespace
+Goal Management & \texttt{/goals} to view, \texttt{/update goal} to modify. Goals tagged by timeframe: 1yr / 5yr / 10yr. Non-negotiables are a flag on the same table, not a separate concept. \\
+\addlinespace
+Free-Form Chat & Full context of goals, logs, health records, and history on every call. Agent responds as a knowledgeable coach, never a generic chatbot. \\
+\addlinespace
+Weekly Summary & Auto-generated every Sunday evening. Habits hit vs.\ missed, mood trend, food quality, study pace, spend pattern, standout wins, one honest observation. \\
+\addlinespace
+Streak Tracking & Per-habit streaks with milestone notifications (7, 30, 90 days). Broken streaks are acknowledged directly, not ignored. \\
+\bottomrule
+\end{longtable}
+
 \end{document}
