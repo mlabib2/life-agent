@@ -153,4 +153,64 @@ Streak Tracking & Per-habit streaks with milestone notifications (7, 30, 90 days
 \bottomrule
 \end{longtable}
 
+\subsection{Health \& Personal Profile Records (Phase 2)}
+
+A centralised, persistent knowledge base about Mahir that is injected into every Claude call. Unlike daily logs (which capture what happened today), profile records capture who Mahir is --- his biology, medical history, and physical baseline. This is what separates a generic chatbot from a true personal advisor.
+
+\begin{longtable}{>{\bfseries}p{4cm} p{10cm}}
+\toprule
+Record Type & Description \\
+\midrule
+Blood Tests & Full panel results (iron, testosterone, vitamin D, glucose, lipids, etc.). Agent flags values outside optimal range and cross-references with reported energy, mood, and gym performance. \\
+\addlinespace
+Body Composition & InBody / DEXA results: weight, muscle mass, body fat \%, visceral fat level. Tracked over time to show progress beyond scale weight. \\
+\addlinespace
+Medical Notes & Injuries, conditions, medications, allergies. Agent never recommends something that conflicts with these. (e.g.\ knee effusion $\rightarrow$ no heavy squats flagged.) \\
+\addlinespace
+Dietary Profile & Restrictions, intolerances, preferences, current approach (IF, clean eating, etc.). Set during onboarding, updated anytime. \\
+\addlinespace
+Baseline Metrics & Resting heart rate, VO2 max estimates, sleep baseline, HRV if tracked. Reference point for what ``normal'' looks like for Mahir. \\
+\addlinespace
+Upload Commands & \texttt{/record bloodtest}, \texttt{/record inbody}, \texttt{/record note}. Mahir describes or pastes results; agent parses, stores structured JSON, and confirms what it learned. \\
+\bottomrule
+\end{longtable}
+
+\textbf{Important boundary:} the agent frames health insights as ``based on your labs and the research, here is what this may mean'' --- not medical diagnosis. It connects dots (e.g.\ low iron + poor gym performance + fatigue) and suggests actions, but never replaces professional medical advice.
+
+\subsection{Financial Tracking (Phase 2)}
+
+End-of-day voice or text spend log. Not a full budgeting tool --- a pattern-awareness tool. The agent notices drift before Mahir does.
+
+\begin{longtable}{>{\bfseries}p{4cm} p{10cm}}
+\toprule
+Feature & Description \\
+\midrule
+EOD Spend Log & Part of the evening review: ``What did you spend today, on what, and was it intentional?'' Voice note accepted. Agent parses and stores in \texttt{logs} table with type \texttt{finance}. \\
+\addlinespace
+Financial Goals & Monthly budget targets and savings goals stored in the \texttt{goals} table (tagged financial). Agent tracks progress and flags drift. \\
+\addlinespace
+Pattern Detection & Agent notices recurring patterns over weeks: food delivery frequency, impulse categories, lifestyle creep. Raised in weekly summary when relevant. \\
+\bottomrule
+\end{longtable}
+
+\textit{Scope note: no open banking, no CSV imports, no category taxonomy. One daily sentence that the agent reasons over is enough.}
+
+\subsection{Learning \& Study Tracking (Phase 2)}
+
+Tracks what Mahir is studying and holds him accountable to it. Initially scoped to CFA exam preparation, but designed to generalise to any learning goal.
+
+\begin{longtable}{>{\bfseries}p{4cm} p{10cm}}
+\toprule
+Feature & Description \\
+\midrule
+Study Log & Daily log: what was studied, how long, session quality (focused / distracted). One sentence minimum. Stored in \texttt{logs} with type \texttt{study}. \\
+\addlinespace
+CFA Countdown & CFA exam date stored as a hard event. Agent tracks cumulative study hours logged vs.\ pace needed to cover material by exam date. Nudges when behind. \\
+\addlinespace
+Book Tracking & Current book, pages per session, key takeaways. Agent asks about retention, not just completion. \\
+\addlinespace
+Learning Goals & Study targets stored in \texttt{goals} alongside life goals. Surfaced in morning check-in. \\
+\bottomrule
+\end{longtable}
+
 \end{document}
