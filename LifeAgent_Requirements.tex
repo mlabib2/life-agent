@@ -213,4 +213,98 @@ Learning Goals & Study targets stored in \texttt{goals} alongside life goals. Su
 \bottomrule
 \end{longtable}
 
+\subsection{Mental \& Emotional Reflection (Phase 4)}
+
+Goes deeper than a 1--10 mood score. Weekly prompts capture what drained and energised Mahir, surfacing patterns that are invisible day-to-day.
+
+\begin{longtable}{>{\bfseries}p{4cm} p{10cm}}
+\toprule
+Feature & Description \\
+\midrule
+Weekly Reflection & Agent asks once per week: what drained you, what energised you, what is on your mind. Stored as \texttt{logs} with type \texttt{reflection}. \\
+\addlinespace
+Cross-Log Patterns & Agent reads across multiple weeks of reflection data to surface recurring themes: ``You've mentioned feeling drained after social events three times this month.'' \\
+\addlinespace
+Mood Correlation & Agent cross-references low mood periods with sleep, gym, food, and finance logs to find root causes, not just symptoms. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Web Intelligence --- Tavily + Claude Tool Use (Phase 3)}
+
+The agent can search the live web when advice quality benefits from current information. Not triggered on every message --- only when Claude determines external sources would meaningfully improve the response.
+
+\textbf{Architecture:} Claude Tool Use hybrid. The \texttt{search\_web} function is defined as a Claude tool. Claude decides autonomously when to call it during free-form conversation. For scheduled proactive messages that always require web data (e.g.\ weekly health tip), the backend triggers Tavily manually before the Claude call.
+
+\begin{longtable}{>{\bfseries}p{4cm} p{10cm}}
+\toprule
+Trigger Example & Behaviour \\
+\midrule
+Supplement / health question & Agent searches Examine.com, PubMed abstracts, r/nutrition \\
+\addlinespace
+Training approach & Agent searches recent evidence, fitness forums, Huberman summaries \\
+\addlinespace
+CFA study strategy & Agent searches r/CFA, Analyst Forum, recent study guides \\
+\addlinespace
+Nutrition question & Agent searches current research summaries, food science sites \\
+\addlinespace
+Financial discipline & Agent searches relevant Reddit threads, finance community advice \\
+\bottomrule
+\end{longtable}
+
+Every response using search results cites the sources so Mahir can verify if he chooses.
+
+\subsection{Decision Log \& Agent Brain (Phase 3)}
+
+Two features that give the agent long-term coherence beyond raw log data.
+
+\textbf{Decision Log:} Mahir logs significant decisions --- career, money, relationships --- with context, options considered, and reasoning. Stored in \texttt{records} with type \texttt{decision}. The agent references prior decisions when the same topic resurfaces and calls out contradictions between current behaviour and stated reasoning.
+
+\textbf{Agent Brain Snapshot:} Every Sunday alongside the weekly review, the agent rewrites a structured summary of Mahir's current state. Stored in \texttt{records} as type \texttt{brain\_snapshot}. Contains: active goals, open decisions, key health flags, momentum score, patterns noticed this week. This snapshot is injected into every Claude call as a compressed long-term memory layer --- replacing raw log retrieval for older data and reducing token cost.
+
+\subsection{Third-Party Integrations}
+
+Automated data pulls that eliminate manual logging for high-value signals. All three use a pull-on-schedule pattern: the backend fetches data periodically and stores it in existing tables. No new tables required.
+
+\begin{longtable}{>{\bfseries}p{3cm} p{4cm} p{7cm}}
+\toprule
+Integration & Phase & What It Adds \\
+\midrule
+Google Calendar & Phase 4 & Morning check-in automatically includes today's schedule. Agent knows packed days, meeting load, blocked gym slots. Events pulled into \texttt{events} table nightly. \\
+\addlinespace
+Strava & Phase 5 & Workout sessions auto-logged to \texttt{logs} (type: \texttt{strava\_activity}). No manual gym check-in needed. Real data: duration, heart rate, calories. Validates streak tracking against actual recorded sessions. \\
+\addlinespace
+Apple Health & Phase 7 & Sleep duration, resting heart rate, steps, HRV synced each morning via an iPhone Shortcut. Shortcut runs automatically, posts data to the bot as a structured message. Stored in \texttt{logs} (type: \texttt{health\_metric}). Ties directly into Huberman protocols and mood correlation. \\
+\bottomrule
+\end{longtable}
+
+\textbf{Auth pattern (Google Calendar and Strava):} OAuth 2.0 one-time setup. User authorises the app, backend receives and stores a refresh token in the \texttt{users} table. Access tokens are refreshed automatically on each API call. No repeated logins.
+
+\textbf{Apple Health pattern:} no server-side API exists for HealthKit. Workaround: an iPhone Shortcut (built in the Shortcuts app, zero code) reads HealthKit data each morning and sends it as a Telegram message to the bot. Bot parses the structured message and stores the metrics. One-time setup, fully automatic after.
+
+\subsection{Advanced Features (Phases 6--7 --- After Core is Stable)}
+
+\begin{longtable}{>{\bfseries}p{4cm} p{10cm}}
+\toprule
+Feature & Description \\
+\midrule
+Voice Message Support & Telegram audio $\rightarrow$ Whisper transcription $\rightarrow$ processed as text. Enables eyes-free logging post-gym or during commutes. \\
+\addlinespace
+Photo Food Logging & Send a photo of a meal. Agent estimates quality and logs it. \\
+\addlinespace
+Trajectory Projection & Monthly feature. Based on actual consistency scores, agent projects where Mahir is likely to be physically, financially, and in his habits in 12 months and 2 years. Data-driven, not motivational fluff. \\
+\addlinespace
+Social Module & Track meaningful social interactions. Agent flags isolation patterns. \\
+\addlinespace
+Time Management Module & Track how time is actually spent vs.\ intended. Weekly breakdown across work/study, gym, social, rest, wasted time. \\
+\addlinespace
+Monthly Meta-Review & Macro pattern analysis across all weekly summaries. Trends invisible week-to-week become clear at month scale. \\
+\addlinespace
+Apple Health / Google Fit & Auto-pull workout data to validate check-ins against device-recorded sessions. \\
+\addlinespace
+``Roast Me'' Mode & On demand. Brutally honest assessment of the last 30 days based on all logs. \\
+\addlinespace
+Challenge System & Weekly agent-generated challenge targeting current weak points. \\
+\bottomrule
+\end{longtable}
+
 \end{document}
