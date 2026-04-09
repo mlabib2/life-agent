@@ -307,4 +307,72 @@ Challenge System & Weekly agent-generated challenge targeting current weak point
 \bottomrule
 \end{longtable}
 
+% ─── SECTION 4: TECHNICAL ARCHITECTURE ───────────────────────────────────────
+\section{Technical Architecture}
+
+\subsection{System Diagram}
+
+\begin{lstlisting}
+Mahir (Telegram)
+    |
+    v
+Telegram Bot API  <----> Scheduler (APScheduler)
+    |                         |
+    v                         v
+Backend App (Python + FastAPI)
+    |           |           |
+    v           v           v
+Claude API    Supabase     Tavily API
+(Anthropic)   (PostgreSQL, (live web search,
++ Tool Use)    managed DB)  on Claude request)
+\end{lstlisting}
+
+\textbf{Flow for a typical message (polling mode):}
+\begin{enumerate}[noitemsep]
+    \item Backend polls Telegram every second for new messages
+    \item Message received --- intent classifier runs first (is this a slash command, habit log, or free-form?)
+    \item If structured intent (e.g.\ \texttt{/done gym}): handle directly, update DB, reply, done
+    \item If free-form: backend assembles tiered context from DB (see Section 6)
+    \item Backend calls Claude API with assembled context + user message + tool definitions
+    \item If Claude calls \texttt{search\_web}, backend executes Tavily query and returns results to Claude
+    \item Claude generates final response (with citations if search was used)
+    \item If Claude called \texttt{log\_data} during the conversation, backend writes the structured JSON directly to Supabase --- no text parsing
+    \item Backend sends reply to Telegram
+\end{enumerate}
+
+\subsection{Tech Stack}
+
+\begin{longtable}{>{\bfseries}p{4cm} p{5cm} p{5cm}}
+\toprule
+Layer & Technology & Rationale \\
+\midrule
+Interface & Telegram Bot (long polling) & Always accessible, supports text/voice/buttons/photos. Polling mode --- no domain or SSL certificate required. \\
+Backend & Python + FastAPI & Fast to build, best library ecosystem for this use case \\
+LLM & Claude API (Sonnet) & Best-in-class reasoning, native tool use, long context, prompt caching \\
+Web Search & Tavily API & Purpose-built for AI agents; clean structured JSON; cites sources \\
+Integrations & Google Calendar API & Pulls daily schedule into morning check-in context; OAuth 2.0 \\
+Integrations & Strava API & Auto-logs workout sessions; validates gym streaks against real data; OAuth 2.0 \\
+Integrations & Apple Health (Shortcuts) & Sleep, HR, HRV via iPhone Shortcut; no server API needed \\
+Database & Supabase (PostgreSQL) & Managed hosted Postgres; native JSONB columns; built-in dashboard to view life data; automatic backups; free tier sufficient; strong 2026 resume signal \\
+Scheduler & APScheduler & In-process cron, runs inside the app container \\
+Transcription & OpenAI Whisper API & Voice message to text (Phase 6) \\
+Containerisation & Docker + docker-compose & App runs as a single container; dev/prod parity; standard in engineering and fintech roles \\
+Hosting & DigitalOcean Droplet (\$4/month) & Always-on server running the app container; Supabase handles the DB separately \\
+\bottomrule
+\end{longtable}
+
+\subsection{Estimated Monthly Cost}
+
+\begin{longtable}{>{\bfseries}p{5cm} p{3cm} p{6cm}}
+\toprule
+Item & Est.\ Cost & Notes \\
+\midrule
+DigitalOcean Droplet & \$4/month & Smallest droplet, sufficient for this workload \\
+Claude API (with caching) & \$2--4/month & \textasciitilde10 interactions/day; prompt caching cuts cost by up to 90\% on static profile \\
+Tavily API (search) & \$1--2/month & \textasciitilde50--100 searches/month at \$0.01/search; only fires when Claude requests it \\
+Whisper API (voice, Phase 6) & \$1--2/month & Only if voice feature is used regularly \\
+\textbf{Total} & \textbf{\$8--12/month} & \\
+\bottomrule
+\end{longtable}
+
 \end{document}
