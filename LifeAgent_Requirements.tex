@@ -375,4 +375,122 @@ Whisper API (voice, Phase 6) & \$1--2/month & Only if voice feature is used regu
 \bottomrule
 \end{longtable}
 
+% ─── SECTION 5: DATA MODEL ────────────────────────────────────────────────────
+\section{Data Model}
+
+\textbf{Design principle: KISS + DRY.} Seven tables cover the entire system. The \texttt{logs} and \texttt{records} tables use a \texttt{type} field and a flexible \texttt{JSONB} column (PostgreSQL binary JSON --- indexed, fast, queryable) to handle all domains without table proliferation. Recommended indexes: \texttt{(user\_id, date)} on \texttt{logs}, \texttt{(user\_id, type, date)} on \texttt{records}, \texttt{(user\_id, timestamp)} on \texttt{conversations}.
+
+\begin{lstlisting}[language=SQL]
+-- Core identity, preferences, OAuth tokens, and onboarding state
+users (
+    id, telegram_user_id, name, timezone,
+    wake_time, sleep_target_time,
+    tone_preference TEXT,           -- 'hamza' | 'huberman' | 'flexible'
+    google_refresh_token TEXT,      -- Google Calendar OAuth
+    strava_refresh_token TEXT,      -- Strava OAuth
+    onboarding_complete BOOLEAN DEFAULT FALSE,
+    created_at
+)
+
+-- Goals + non-negotiables unified
+-- is_non_negotiable = true means sacred weekly minimum
+goals (
+    id, user_id, title, description,
+    timeframe TEXT,              -- '1yr' | '5yr' | '10yr' | 'ongoing'
+    category TEXT,               -- 'health' | 'finance' | 'study' | 'life'
+    is_non_negotiable BOOLEAN,
+    target_per_week INT,         -- only used when is_non_negotiable = true
+    current_streak INT DEFAULT 0,
+    longest_streak INT DEFAULT 0,
+    active BOOLEAN,
+    created_at, updated_at
+)
+
+-- All daily captures: habits, mood, food, finance, study, social, reflection
+logs (
+    id, user_id,
+    type TEXT,       -- 'habit' | 'mood' | 'food' | 'finance'
+                     --  | 'study' | 'social' | 'reflection'
+    date DATE,
+    goal_id INT,     -- nullable; used to link habit logs to a specific goal
+    data JSON,       -- flexible per type (see examples below)
+    notes TEXT,
+    created_at
+)
+
+-- Semi-permanent personal data and agent-generated summaries
+records (
+    id, user_id,
+    type TEXT,       -- 'blood_test' | 'body_comp' | 'medical'
+                     -- | 'dietary' | 'decision' | 'weekly_summary'
+                     -- | 'brain_snapshot'
+    date DATE,
+    data JSON,
+    source TEXT,     -- 'lab report' | 'InBody scan' | 'manual' | 'agent'
+    file_url TEXT,   -- nullable; Supabase Storage URL for original uploaded file
+    notes TEXT,
+    created_at
+)
+
+-- Upcoming hard dates: CFA exam, travel, deadlines
+-- source distinguishes manual entries from Google Calendar imports
+events (
+    id, user_id, title TEXT,
+    date DATE, type TEXT,
+    source TEXT DEFAULT 'manual',   -- 'manual' | 'google_calendar'
+    notes TEXT
+)
+
+-- Extensible life domain configs — agent can create/activate/deactivate via conversation
+-- Adding a new tracking area = inserting one row. Zero code changes.
+domains (
+    id, user_id,
+    name TEXT,                   -- 'cold_shower' | 'screen_time' | 'journaling'
+    display_name TEXT,           -- shown to Mahir: "Cold Showers"
+    active BOOLEAN,
+    evening_prompt TEXT,         -- "Did you have a cold shower today?"
+    context_decay_days INT,      -- how far back to pull logs for context
+    nudge_after_days INT,        -- nullable; days without a log before nudge fires
+    system_prompt_snippet TEXT,  -- injected into Claude system prompt when active
+    created_at
+)
+
+-- Full message history
+conversations (
+    id, user_id,
+    role TEXT,           -- 'user' | 'assistant'
+    content TEXT,
+    timestamp DATETIME
+)
+\end{lstlisting}
+
+\textbf{JSON shape examples per type:}
+
+\begin{lstlisting}[language=SQL]
+-- logs.data examples:
+habit:    { "goal_id": 3, "completed": true }
+mood:     { "score": 7, "energy": 6 }
+food:     { "description": "chicken rice veg", "quality": 8 }
+finance:  { "amount": 45, "category": "food delivery",
+            "intentional": false }
+study:          { "topic": "CFA Fixed Income", "duration_min": 90,
+                  "quality": "focused" }
+reflection:     { "drained_by": "...", "energised_by": "...",
+                  "on_mind": "..." }
+strava_activity:{ "type": "WeightTraining", "duration_min": 52,
+                  "avg_hr": 144, "calories": 310 }
+health_metric:  { "sleep_hrs": 7.2, "resting_hr": 58,
+                  "steps": 8400, "hrv": 62 }
+
+-- records.data examples:
+blood_test:   { "iron": 72, "ferritin": 18, "vitd": 41,
+                "testosterone": 520, "glucose": 89 }
+body_comp:    { "weight_kg": 84.2, "muscle_kg": 38.1,
+                "fat_pct": 19.4, "visceral": 8 }
+decision:     { "topic": "...", "options": [...],
+                "reasoning": "...", "choice": "..." }
+brain_snapshot: { "momentum": 7, "open_decisions": [...],
+                  "health_flags": [...], "patterns": [...] }
+\end{lstlisting}
+
 \end{document}
