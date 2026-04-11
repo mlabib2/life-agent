@@ -493,4 +493,168 @@ brain_snapshot: { "momentum": 7, "open_decisions": [...],
                   "health_flags": [...], "patterns": [...] }
 \end{lstlisting}
 
+% ─── SECTION 6: AGENT LOGIC & CONTEXT INJECTION ───────────────────────────────
+\section{Agent Logic \& Context Injection}
+
+\subsection{What Gets Injected into Every Claude Call}
+
+Context is assembled in tiers. Each tier has a different decay rate --- how far back data remains useful varies by type. Older data is not discarded; it is compressed into the brain snapshot rather than removed.
+
+\begin{longtable}{>{\bfseries}p{1.5cm} p{4cm} p{4cm} p{4.5cm}}
+\toprule
+Tier & Content & Decay Rate & Rationale \\
+\midrule
+1 & Goals, non-negotiables, tone, user profile & Near-zero & Anchors; always relevant \\
+\addlinespace
+1 & Latest health records (blood test, body comp, medical notes) & Slow (3--6 months) & Biology changes slowly \\
+\addlinespace
+1 & Latest brain snapshot & Weekly rewrite & Compressed state; replaces raw history \\
+\addlinespace
+2 & Daily logs: last 14 days, full detail & Fast (14 days) & Daily signal; pattern emerges over weeks \\
+\addlinespace
+2 & Study logs: weighted by CFA proximity & Event-driven & High weight as exam approaches; resets after \\
+\addlinespace
+2 & Strava activities + Apple Health metrics: last 14 days & Fast (14 days) & Real workout and sleep data; cross-referenced with mood and energy logs \\
+\addlinespace
+2 & Google Calendar events: next 14 days & Time-bounded & Pulled nightly; agent knows schedule before check-in \\
+\addlinespace
+3 & Weekly summaries: last 4, full text & Medium (8 weeks) & Already condensed; useful longer than raw logs \\
+\addlinespace
+3 & Upcoming events: next 14 days & Time-bounded & Exam dates, travel, deadlines \\
+\addlinespace
+4 & Older data & Compressed into brain snapshot & Not injected raw; prevents token bloat \\
+\bottomrule
+\end{longtable}
+
+Tier 1 is cached via Anthropic prompt caching, reducing input token cost by up to 90\% on the largest part of the prompt.
+
+\subsection{Domain-Driven Extensibility}
+
+All tracking domains (fitness, finance, study, etc.) are rows in the \texttt{domains} table, not hardcoded logic. The agent reads active domains at runtime and builds the evening review, context injection, and nudge schedule from them dynamically.
+
+\textbf{What this means in practice:}
+\begin{itemize}[noitemsep]
+    \item Evening review loops over active domains and asks each one's \texttt{evening\_prompt}
+    \item Context injection loops over active domains and pulls the right window of logs per domain
+    \item Scheduler checks \texttt{nudge\_after\_days} per domain and fires nudges automatically
+    \item System prompt concatenates \texttt{system\_prompt\_snippet} from all active domains
+\end{itemize}
+
+\textbf{Agent self-extension:} Mahir can tell the agent to start tracking something new in plain conversation. The agent asks two or three clarifying questions, writes the domain config row, and the new domain is live from that evening's review. No code change, no redeployment.
+
+\textbf{Example:}
+\begin{lstlisting}
+Mahir:  "I want to start tracking cold showers"
+Agent:  "Got it. Just yes/no each evening, or do you want
+         to log duration too?"
+Mahir:  "Just yes/no. And remind me if I miss 3 days."
+Agent:  [inserts row into domains table]
+        "Done. I'll ask you about cold showers tonight.
+         3-day nudge is set."
+\end{lstlisting}
+
+\textbf{Deactivation:} the agent can also deactivate domains --- ``stop tracking cold showers'' sets \texttt{active = false}. History is preserved. The agent can suggest deactivating domains with no logs in 30+ days.
+
+\subsection{Tool Use --- Web Search + DB Writes}
+
+Two tools are defined in every Claude API call. Claude calls them autonomously based on context.
+
+\textbf{Tool 1: \texttt{search\_web}} --- live web retrieval via Tavily. Claude calls this when advice quality benefits from current research or forum discussions.
+
+\begin{lstlisting}
+{
+  "name": "search_web",
+  "description": "Search the live web for current information.
+                  Use when advice benefits from recent research,
+                  forum discussions, or up-to-date guidance.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string" },
+      "domains": { "type": "array", "items": { "type": "string" } }
+    },
+    "required": ["query"]
+  }
+}
+\end{lstlisting}
+
+\textbf{Tool 2: \texttt{log\_data}} --- structured DB write. Instead of the backend parsing Claude's text to infer what should be logged (fragile), Claude explicitly calls this tool with structured JSON when it determines something should be recorded. Reliable, unambiguous, impossible to misparse.
+
+\begin{lstlisting}
+{
+  "name": "log_data",
+  "description": "Write a structured log entry to the database.
+                  Call this whenever the user reports something
+                  that should be recorded: habit completion, mood,
+                  food, spend, study session, or any active domain.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "type":    { "type": "string" },
+      "date":    { "type": "string", "format": "date" },
+      "data":    { "type": "object" },
+      "notes":   { "type": "string" }
+    },
+    "required": ["type", "data"]
+  }
+}
+\end{lstlisting}
+
+Example: Mahir says ``gym done, felt strong, mood 8''. Claude calls \texttt{log\_data} twice --- once for the habit log, once for the mood log --- with clean JSON. Backend writes directly. No text parsing.
+
+For scheduled proactive messages that always need web data, the backend calls Tavily manually before the Claude call and injects results into context.
+
+\subsection{Intent Classification}
+
+Structured commands are intercepted before Claude to keep the pipeline efficient:
+
+\begin{longtable}{>{\ttfamily}p{4cm} p{10cm}}
+\toprule
+Intent & Action \\
+\midrule
+log\_habit & Extract goal name, mark completed, update streak \\
+log\_food & Extract description, store in logs (type: food) \\
+log\_mood & Extract score, store in logs (type: mood) \\
+log\_finance & Extract amount and category, store in logs (type: finance) \\
+log\_study & Extract topic and duration, store in logs (type: study) \\
+log\_decision & Extract context and reasoning, store in records (type: decision) \\
+record\_health & Parse health data, store in records (type: blood\_test / body\_comp / medical) \\
+add\_domain & Ask clarifying questions, insert new row into domains table, confirm activation \\
+manage\_domain & Activate, deactivate, or update an existing domain config \\
+view\_goals & Query goals table, return formatted list \\
+update\_goal & Update goals table, confirm change \\
+request\_summary & Generate from DB, return formatted report \\
+status & Return current streaks, today's completion, CFA days remaining, mood trend \\
+roast\_me & Pull last 30 days of all logs, generate brutally honest assessment \\
+free\_form & Pass to Claude with full context and both tool definitions \\
+\bottomrule
+\end{longtable}
+
+\subsection{Response Modes}
+
+\begin{itemize}[noitemsep]
+    \item \textbf{Daily} --- Conversational, supportive, light. Default mode.
+    \item \textbf{Coach} --- When Mahir is struggling. Asks questions, finds root cause.
+    \item \textbf{Tough Love} --- Same excuse 3+ times, or non-negotiable missed 3 consecutive times. Direct. No softening.
+    \item \textbf{Celebratory} --- Streak milestones, personal records, a genuinely good week.
+    \item \textbf{Projection} --- Monthly mode. Clinical, data-driven. No fluff.
+\end{itemize}
+
+\subsection{Proactive Intelligence}
+
+The scheduler triggers agent-initiated messages:
+
+\begin{itemize}[noitemsep]
+    \item Morning check-in: daily at configured wake time
+    \item Evening review: daily at configured evening time (covers gym, food, mood, spend, study)
+    \item Gym nudge: no gym log in 72+ hours
+    \item Study nudge: no study log in 48+ hours; escalates as CFA exam approaches
+    \item Mood check: mood below 6/10 for 5 consecutive days $\rightarrow$ deeper conversation
+    \item Sunday weekly summary: auto-generated + brain snapshot rewritten
+    \item Monthly meta-review: first Sunday of each month
+    \item Relationship nudge: no social log in 10+ days
+    \item Financial nudge: spend log missing for 3+ consecutive evenings
+    \item Missed review recovery: if evening review was skipped, next morning check-in acknowledges the gap and offers to catch up before moving to today
+\end{itemize}
+
 \end{document}
