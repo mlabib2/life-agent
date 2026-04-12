@@ -657,4 +657,53 @@ The scheduler triggers agent-initiated messages:
     \item Missed review recovery: if evening review was skipped, next morning check-in acknowledges the gap and offers to catch up before moving to today
 \end{itemize}
 
+% ─── SECTION 7: INPUT / OUTPUT DESIGN ────────────────────────────────────────
+\section{Input / Output Design}
+
+\subsection{Inputs from Mahir}
+
+\begin{itemize}[noitemsep]
+    \item \textbf{Text messages} --- primary input, always supported
+    \item \textbf{Voice notes} --- Telegram audio $\rightarrow$ Whisper transcription $\rightarrow$ processed as text (Phase 6)
+    \item \textbf{Photos} --- food photos for meal logging (Phase 7)
+    \item \textbf{Inline button taps} --- Telegram keyboards for yes/no, 1--10 ratings, quick habit logs
+    \item \textbf{Slash commands} --- \texttt{/goals}, \texttt{/week}, \texttt{/done}, \texttt{/record}, \texttt{/roastme}, etc.
+\end{itemize}
+
+\subsection{Outputs from Agent}
+
+\begin{itemize}[noitemsep]
+    \item \textbf{Conversational text} --- default response format
+    \item \textbf{Structured summaries} --- weekly/monthly reports with clear sections
+    \item \textbf{Proactive messages} --- scheduler-triggered, not in response to input
+    \item \textbf{Inline keyboards} --- e.g.\ ``Did you hit gym today? [Yes] [No] [Will do tonight]''
+    \item \textbf{Web-sourced advice} --- response includes cited sources when Tavily was used
+    \item \textbf{Trajectory projections} --- formatted multi-paragraph assessments (Phase 7)
+\end{itemize}
+
+% ─── SECTION 8: BUILD SEQUENCE ────────────────────────────────────────────────
+\section{Build Sequence}
+
+Each phase delivers a working, usable system. No partially-working phases.
+
+\begin{longtable}{>{\bfseries}p{1.5cm} p{3.5cm} p{9cm}}
+\toprule
+Phase & Name & Deliverables \\
+\midrule
+1 & Skeleton & Telegram bot running on DigitalOcean. Claude API connected. Basic free-form chat with static system prompt. \\
+\addlinespace
+2 & Database \& Profile & 7-table Supabase schema deployed (run migration against existing Supabase project). Domains table pre-populated with built-in domains. Habit logging (\texttt{/done gym}), goal management (\texttt{/goals}), and daily log storage working. Health record commands (\texttt{/record bloodtest}, \texttt{/record inbody}) working. Financial spend logging in evening review. CFA exam date stored as event. Study logs capturing. \\
+\addlinespace
+3 & Context + Intelligence & Full tiered context assembled from DB on every Claude call. Time decay applied per data type. Tavily integrated as Claude Tool Use for free-form chat. Decision log working. Agent writes first brain snapshot. This is the moment the agent becomes genuinely useful. \\
+\addlinespace
+4 & Scheduler \& Calendar & Morning check-in automated. Evening review automated (covers all domains). Sunday weekly summary + brain snapshot rewrite. Proactive nudges for gym, study, mood, finance. Weekly mental reflection. \textbf{Google Calendar integration:} OAuth setup, nightly event sync into \texttt{events} table, morning check-in includes today's schedule. \\
+\addlinespace
+5 & Patterns \& Strava & Streak tracking per habit. Mood pattern detection. Tough-love mode triggers. Study pace vs.\ CFA date. Financial drift detection. Inline Telegram buttons. \textbf{Strava integration:} OAuth setup, nightly activity pull, gym streaks validated against real recorded sessions. \\
+\addlinespace
+6 & Voice & Whisper API integration. Voice notes transcribed and processed across all log types. EOD review fully voice-capable. \\
+\addlinespace
+7 & Advanced & Trajectory projection, photo food logging, social module, time management module, monthly meta-review, Roast Me mode, challenge system. \textbf{Apple Health:} iPhone Shortcut built to post sleep/HR/HRV each morning; backend parses and stores in \texttt{logs} (type: \texttt{health\_metric}). \\
+\bottomrule
+\end{longtable}
+
 \end{document}
