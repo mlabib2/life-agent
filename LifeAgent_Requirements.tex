@@ -706,4 +706,196 @@ Phase & Name & Deliverables \\
 \bottomrule
 \end{longtable}
 
+% ─── SECTION 9: ONBOARDING QUESTIONS ─────────────────────────────────────────
+\section{Onboarding Questions}
+
+\textbf{For the AI agent reading this document:} ask these questions in a natural conversational flow on first interaction. Store every answer to the database immediately.
+
+\begin{enumerate}
+    \item \textbf{Non-negotiables} --- ``What are the 3--5 things that must happen every week no matter what? Be specific: gym 3x or 5x? Sleep by midnight or 1am?''
+
+    \item \textbf{Life goals} --- ``Walk me through your goals. What does 1 year from now look like if things go well? What about 5 years?''
+
+    \item \textbf{Dietary direction} --- ``What's your approach to food? Clean eating, macros, intermittent fasting, or track quality generally?''
+
+    \item \textbf{Financial baseline} --- ``What's your current financial goal --- savings target, monthly budget, or just spending awareness? And roughly what does a normal month look like in terms of spend?''
+
+    \item \textbf{CFA and study} --- ``Your CFA exam --- what's the date? And what's your current study situation: are you on a schedule, behind, or just starting?''
+
+    \item \textbf{Learning priorities} --- ``What are you currently reading or studying beyond CFA? Any learning goals you want me to hold you to?''
+
+    \item \textbf{Tone preference} --- ``How do you want me to speak to you when you're off track? (A) Hamza-style --- blunt, no softening. (B) Huberman-style --- clinical and data-first. (C) Flexible --- read the room.''
+
+    \item \textbf{Wake and sleep targets} --- ``What time do you want your morning check-in? And evening review?''
+
+    \item \textbf{Timezone} --- Confirm timezone for scheduling.
+
+    \item \textbf{Current status} --- ``What's going on in your life right now? What is the biggest thing you are trying to fix or build?'' (Open-ended --- this is the first real conversation, not a form.)
+\end{enumerate}
+
+Once these are answered, confirm the setup back to Mahir in a single summary message and ask if anything needs adjusting before beginning.
+
+% ─── SECTION 10: DEPLOYMENT & OPERATIONS ─────────────────────────────────────
+\section{Deployment \& Operations}
+
+\subsection{Overview}
+
+\begin{longtable}{>{\bfseries}p{4cm} p{10cm}}
+\toprule
+Decision & Choice \\
+\midrule
+Hosting & DigitalOcean Droplet (\$4/month) --- runs the app container \\
+Database & Supabase (existing) --- managed PostgreSQL, separate from the droplet \\
+Bot mode & Long polling --- no domain or SSL required \\
+Containerisation & Docker + docker-compose --- single app container \\
+CI/CD & GitHub Actions --- auto-deploy on push to \texttt{main} \\
+Backup (app) & DigitalOcean Droplet Backups (\$0.80/month) \\
+Backup (DB) & Handled automatically by Supabase --- no action required \\
+Secrets & \texttt{.env} file on server, GitHub Secrets for CI/CD, never in git \\
+Security & Whitelist Mahir's Telegram user ID --- bot ignores all other senders \\
+\bottomrule
+\end{longtable}
+
+\subsection{Repository Structure}
+
+\begin{lstlisting}
+life-agent/
+|-- main.py              # Entry point
+|-- bot.py               # Telegram polling loop
+|-- scheduler.py         # APScheduler jobs
+|-- context.py           # Tiered context assembly
+|-- db.py                # Supabase / PostgreSQL queries
+|-- tools.py             # Claude tool definitions (search_web, log_data)
+|-- config.py            # Loads .env vars
+|-- Dockerfile
+|-- docker-compose.yml
+|-- requirements.txt
+|-- .env.example         # Template (committed --- no real values)
+|-- .env                 # Real secrets (never committed)
+|-- .gitignore
+|-- .github/
+|   |-- workflows/
+|       |-- deploy.yml   # GitHub Actions CI/CD
+|-- LifeAgent_Requirements.tex
+\end{lstlisting}
+
+\subsection{Docker Setup}
+
+The app runs as a single container. No DB container --- Supabase is external.
+
+\begin{lstlisting}
+# docker-compose.yml
+services:
+  app:
+    build: .
+    env_file: .env
+    restart: always
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+\end{lstlisting}
+
+\begin{lstlisting}
+# Dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+CMD ["python", "main.py"]
+\end{lstlisting}
+
+\subsection{Secrets Management}
+
+All API keys live in a \texttt{.env} file on the server. Never committed to git. An \texttt{.env.example} documents the structure.
+
+\begin{lstlisting}
+# .env.example
+TELEGRAM_BOT_TOKEN=your_token_here
+TELEGRAM_USER_ID=your_telegram_user_id
+ANTHROPIC_API_KEY=your_key_here
+TAVILY_API_KEY=your_key_here
+OPENAI_API_KEY=your_key_here        # Whisper, Phase 6
+DATABASE_URL=postgresql://postgres:password@db.your-project.supabase.co:5432/postgres
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_KEY=your_service_role_key  # for Storage uploads
+\end{lstlisting}
+
+The same keys are stored as GitHub Repository Secrets for use in the CI/CD pipeline.
+
+\subsection{Security --- Telegram User ID Whitelist}
+
+One check at the top of every message handler. The bot silently ignores anyone who is not Mahir.
+
+\begin{lstlisting}[language=Python]
+ALLOWED_USER_ID = int(os.getenv("TELEGRAM_USER_ID"))
+
+def is_authorized(update) -> bool:
+    return update.effective_user.id == ALLOWED_USER_ID
+\end{lstlisting}
+
+\subsection{CI/CD --- GitHub Actions}
+
+On every push to \texttt{main}: SSH into the droplet, pull latest code, rebuild the container, restart. No manual steps after initial setup.
+
+\begin{lstlisting}
+# .github/workflows/deploy.yml
+name: Deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to droplet
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DROPLET_IP }}
+          username: lifeagent
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/lifeagent/app
+            git pull origin main
+            docker-compose up --build -d
+\end{lstlisting}
+
+One-time setup: add \texttt{DROPLET\_IP} and \texttt{SSH\_PRIVATE\_KEY} as GitHub Repository Secrets.
+
+\subsection{Backup}
+
+\textbf{Database (Supabase):} fully managed. Supabase handles automated daily backups on the free tier. No action required.
+
+\textbf{App server (DigitalOcean):} enable Droplet Backups in the DO dashboard. \$0.80/month, weekly full snapshot. Covers app code and config. If the droplet is lost: restore snapshot, re-add \texttt{.env} (secrets are not in snapshots), run \texttt{docker-compose up -d}.
+
+\subsection{Local Development}
+
+Use a separate Telegram bot token for development (create a second bot via BotFather: \texttt{@LifeAgentDev\_bot}). This prevents dev restarts from firing real messages at yourself.
+
+\begin{lstlisting}
+# .env.dev (local only, never committed)
+TELEGRAM_BOT_TOKEN=dev_bot_token_here
+TELEGRAM_USER_ID=your_telegram_user_id
+ANTHROPIC_API_KEY=same_key_or_separate
+DATABASE_URL=postgresql://...supabase...  # can reuse a dev schema
+\end{lstlisting}
+
+Run locally: \texttt{docker-compose up} or \texttt{python main.py} directly. Polling works on localhost with no extra setup.
+
+\subsection{Application Logging}
+
+Python's standard logging module writes to stdout (captured by Docker). Accessible live via \texttt{docker-compose logs -f} or \texttt{docker logs <container\_name>}. Logs cover: every incoming message, every Claude API call, every DB write, every scheduler job fired. Errors logged at ERROR level with full traceback.
+
+\subsection{Error Handling \& Graceful Degradation}
+
+\begin{itemize}[noitemsep]
+    \item \textbf{Claude API down}: catch the exception, send Mahir a message --- ``Having trouble reaching my brain right now, try again in a minute.'' Log the error. Do not crash.
+    \item \textbf{Tavily API down}: skip web search, proceed with Claude using only DB context. Claude responds without citations. Log that search was skipped.
+    \item \textbf{DB write failure}: log the error, notify Mahir that the log may not have saved, prompt to retry.
+    \item \textbf{Scheduler job fails}: log the failure, do not retry automatically (to avoid duplicate messages). Next scheduled run proceeds normally.
+\end{itemize}
+
 \end{document}
