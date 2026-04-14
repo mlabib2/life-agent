@@ -898,4 +898,52 @@ Python's standard logging module writes to stdout (captured by Docker). Accessib
     \item \textbf{Scheduler job fails}: log the failure, do not retry automatically (to avoid duplicate messages). Next scheduled run proceeds normally.
 \end{itemize}
 
+% ─── SECTION 12: OPEN ITEMS ───────────────────────────────────────────────────
+\section{Open Items \& Future Considerations}
+
+\begin{itemize}[noitemsep]
+    \item \textbf{All onboarding fields} --- to be collected on first run (see Section 9)
+    \item \textbf{Life goals} --- dynamic; can be updated at any time; agent reviews monthly
+    \item \textbf{CFA exam date} --- to be confirmed during onboarding; drives study nudge scheduling
+    \item \textbf{GitHub repository} --- create public repo, push initial commit, add \texttt{DROPLET\_IP} and \texttt{SSH\_PRIVATE\_KEY} as repository secrets
+    \item \textbf{README} --- write for the public repo; explains the project, stack, and how to run it
+    \item \textbf{Supabase schema migration} --- run the 6-table schema against the existing Supabase project on first deploy
+    \item \textbf{Google Calendar OAuth} --- create Google Cloud project, enable Calendar API, complete OAuth consent screen setup (Phase 4)
+    \item \textbf{Strava OAuth} --- create Strava API application at strava.com/settings/api (Phase 5)
+    \item \textbf{Apple Health Shortcut} --- build iPhone Shortcut to post daily health metrics to bot (Phase 7)
+    \item \textbf{DigitalOcean Droplet Backups} --- enable in DO dashboard on first deploy (\$0.80/month)
+    \item \textbf{Dev Telegram bot} --- create \texttt{@LifeAgentDev\_bot} via BotFather for local development
+    \item \textbf{Web dashboard} --- not in scope for initial build
+    \item \textbf{Multi-user support} --- not in scope; single-user system for Mahir
+\end{itemize}
+
+% ─── SECTION 13: NOTES FOR THE DEVELOPER ─────────────────────────────────────
+\section{Notes for the Developer / AI Agent}
+
+\begin{enumerate}
+    \item Implement Anthropic prompt caching from Day 1 on the static profile (Tier 1 context). This is the single biggest cost optimisation.
+    \item The 7-table schema is intentional. Do not add new tables for new features --- extend the \texttt{type} field and \texttt{data JSONB} in \texttt{logs} or \texttt{records}. Adding a table is a last resort.
+    \item The agent must never give generic advice. Every response must reference something specific from the logs, goals, or health records. If it cannot, ask a clarifying question.
+    \item Time decay is implemented at context assembly time, not at query time. Do not pull all logs and let Claude decide what is relevant --- the tier system controls what enters the prompt. This keeps token cost predictable.
+    \item The Tavily Tool Use integration means Claude self-routes to web search. Do not add manual intent classification for web search in free-form chat --- Claude handles this more accurately than a keyword classifier.
+    \item The tough-love trigger is important. Without it, the agent becomes an enabler. Non-negotiable missed 3x in a row $\rightarrow$ no softening.
+    \item The brain snapshot is the most important architectural feature for long-term coherence. The agent rewrites it every Sunday. After 3 months, it is richer than any raw log could be.
+    \item The evening review covers all domains in one conversation: gym, food, mood, spend, study. One check-in, not five. Friction kills consistency.
+    \item Voice support changes the feel significantly. When tired or post-gym, typing is too much. Voice in Phase 6 removes that barrier across all log types.
+    \item Goal mutability is a core requirement. Agent asks monthly whether goals still feel right --- people change.
+    \item The \texttt{domains} table is the extensibility contract. Never hardcode a life domain into the evening review, context assembly, or nudge scheduler. All three must read from \texttt{domains} at runtime. Pre-populate the table at schema creation with the built-in domains (fitness, finance, study, mood, food, social, reflection).
+    \item Use Claude Tool Use for all DB writes (\texttt{log\_data} tool), not text parsing. Claude calls the tool with structured JSON; backend writes directly. This is the correct pattern --- reliable, explicit, debuggable.
+    \item Write async Python throughout (\texttt{async}/\texttt{await}). All I/O --- Claude API, Tavily, Supabase, Strava, Google Calendar --- must be non-blocking. FastAPI is async-native; use it correctly.
+    \item Define strict Pydantic models for every log type (HabitLog, MoodLog, FinanceLog, StudyLog, etc.). Validate all incoming data at the boundary before writing to DB. This enforces the JSONB schema contract at the application layer.
+    \item Create an initial brain snapshot at the end of onboarding --- do not wait for the first Sunday. The agent needs compressed memory from day one.
+    \item For file uploads (blood test PDFs, health scan photos): store the original file in Supabase Storage, store the extracted JSONB in \texttt{records.data}, store the file URL in \texttt{records.file\_url}. Never lose the original.
+    \item Conversation history pruning: messages older than 90 days can be deleted from \texttt{conversations}. They are already compressed into weekly summaries and brain snapshots. Prune monthly to keep the table lean.
+    \item Trajectory projection (Phase 7) turns the agent from a logger into a forecaster. It is the highest-value advanced feature. Prioritise it over social and time management modules.
+\end{enumerate}
+
+\vfill
+\begin{center}
+\textcolor{midgray}{\small This document was generated in conversation with Claude (Anthropic). Last updated: May 2026.}
+\end{center}
+
 \end{document}
