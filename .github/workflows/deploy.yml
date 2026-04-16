@@ -1,0 +1,20 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to droplet
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DROPLET_IP }}
+          username: lifeagent
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/lifeagent/app
+            git pull origin main
+            docker-compose up --build -d
