@@ -551,3 +551,164 @@ asyncio.run(test())
 ---
 
 ## Phase 5 — Health Records + File Uploads
+
+**Goal:** You can upload blood tests and health data; agent uses them in context.
+
+### 5.1 — Supabase Storage setup
+- [ ] In Supabase: Storage → New bucket → name it `health-files` → set to private
+- [ ] Note the storage URL pattern: `https://<project>.supabase.co/storage/v1/object/health-files/<filename>`
+
+### 5.2 — File upload handler
+- [ ] In `bot.py`, add `MessageHandler(filters.Document.ALL | filters.PHOTO, handle_file)`:
+  - Download the file using `context.bot.get_file(file_id)`
+  - Upload to Supabase Storage via `supabase.storage.from_("health-files").upload(...)`
+  - Store returned URL in a temp variable, pass to Claude with the message
+- [ ] Handle photo type (food photos, InBody scan photos) separately from documents (PDFs)
+
+### 5.3 — `/record` command
+- [ ] Register `/record` command handler
+- [ ] Parse subcommand: `/record bloodtest`, `/record inbody`, `/record medical`, `/record note`
+- [ ] Prompt Claude with: "The user is uploading a {type}. Parse the following data and store it. [data]"
+- [ ] Claude calls `log_data` internally OR backend calls `insert_record` directly based on type
+- [ ] Reply confirmation: "Got it. I've stored your [type] from [date]. Here's what I noted: ..."
+
+### 5.4 — Health context in Tier 1
+- [ ] Ensure `build_system_prompt` pulls and formats:
+  - Latest `blood_test` record → format as key: value pairs
+  - Latest `body_comp` record → weight, muscle mass, body fat %, date
+  - All `medical` records → conditions, allergies, injuries
+  - Latest `dietary` record → restrictions and preferences
+
+### 5.5 — `/goals` and `/update` commands
+- [ ] `/goals` → Claude renders active goals with current streaks in a formatted list
+- [ ] `/update goal <title>` → opens conversation for goal modification
+- [ ] `/done <goal_name>` → marks habit complete, updates streak, confirms
+
+### ✅ Phase 5 Verification Gate
+```
+1. Send a text description of blood test results
+   → Claude parses and stores; next free-form chat references your lab values
+2. Upload a PDF (any file) → bot acknowledges it and stores URL in Supabase Storage
+3. Run /goals → your actual goals appear with correct streak counts
+4. Run /done gym → streak increments by 1 in DB (check Supabase)
+```
+
+---
+
+## Phase 6 — Web Search (Tavily + Claude Tool Use)
+
+**Goal:** Claude searches the web when it determines live information would improve the answer.
+
+> Note: The `search_web` tool definition was already added in Phase 3. This phase wires up the actual Tavily execution and validates behaviour.
+
+### 6.1 — Tavily client setup
+- [ ] In `tools.py`, initialize `TavilyClient(api_key=settings.TAVILY_API_KEY)`
+- [ ] Implement `run_web_search(query: str, domains: list[str] | None) -> str`:
+  - Call `tavily.search(query=query, search_depth="advanced", include_domains=domains)`
+  - Format results: title, URL, snippet per result
+  - Return as markdown-formatted string with numbered citations
+
+### 6.2 — Tool execution routing
+- [ ] In `execute_tool()`, `search_web` path:
+  - Call `run_web_search(query, input.get("domains"))`
+  - Log: "Tavily search executed: [query] — [n] results returned"
+  - Return formatted results string
+
+### 6.3 — Source citation in replies
+- [ ] After Claude's final response, if search was used:
+  - Append `\n\n_Sources searched via Tavily_` or similar footer
+  - Ensure Claude was prompted to include inline citations (add instruction to system prompt)
+
+### ✅ Phase 6 Verification Gate
+```
+1. Ask: "What's the current research on creatine and sleep quality?"
+   → Claude calls search_web, response includes sources/citations
+2. Ask: "How is my gym routine going?"
+   → Claude does NOT call search_web (uses DB context only)
+3. Check Tavily dashboard — confirm search calls are registered
+```
+
+---
+
+## Phase 7 — Decision Log + Brain Snapshot Enhancement
+
+**Goal:** Agent tracks major life decisions, references them in context, and maintains coherent long-term memory.
+
+### 7.1 — Decision logging
+- [ ] Add `/decision` command handler
+- [ ] Prompt Claude to extract: decision title, context/background, options considered, choice made, reasoning, date
+- [ ] Store as `records` row with `type='decision'`
+- [ ] Reply: "Decision logged. I'll reference this if it comes up again."
+
+### 7.2 — Decision context in prompts
+- [ ] In `build_system_prompt`, add a "Recent Decisions" section:
+  - Pull last 5 `decision` records
+  - Format as: `[date] [title]: [choice made] — [one-line reasoning]`
+
+### 7.3 — Brain snapshot structure
+- [ ] Define exact schema for brain snapshot JSON:
+  ```json
+  {
+    "goals_momentum": [{"goal": "...", "streak": 3, "status": "on_track|behind|ahead"}],
+    "open_decisions": ["..."],
+    "health_flags": ["Low iron noted in last blood test"],
+    "momentum_score": 7,
+    "patterns_noticed": ["Mood dips on Wednesdays", "Gym skips correlate with poor sleep"],
+    "weekly_note": "Strong week on study, gym slipped"
+  }
+  ```
+- [ ] Update `weekly_summary` job prompt to generate snapshot in this exact schema
+- [ ] Update `build_system_prompt` Tier 4 to parse and format this schema
+
+### ✅ Phase 7 Verification Gate
+```
+1. Log a decision: "I decided to focus only on CFA for the next 3 months, dropping side projects"
+2. Two days later, ask about a side project
+   → Agent references the prior decision and asks if you're reconsidering
+3. After Sunday summary runs, check brain_snapshot in Supabase — verify JSON structure matches schema
+4. Check that brain snapshot appears in a free-form chat's context (log the system prompt temporarily)
+```
+
+---
+
+## Phase 8 — Google Calendar Integration
+
+**Goal:** Morning check-in automatically includes today's calendar events pulled from Google Calendar.
+
+### 8.1 — OAuth 2.0 setup
+- [ ] In Google Cloud Console: create project, enable Google Calendar API, create OAuth 2.0 credentials (Web application type)
+- [ ] Set redirect URI to `http://localhost:8000/auth/google/callback` for local dev
+- [ ] Add to `.env`: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
+
+### 8.2 — Auth endpoints in FastAPI
+- [ ] `GET /auth/google` — redirect to Google OAuth consent screen
+- [ ] `GET /auth/google/callback` — receive auth code, exchange for tokens, save `refresh_token` to `users.google_refresh_token`
+- [ ] One-time setup: Mahir visits the URL once, authorises, tokens stored
+
+### 8.3 — Calendar fetch function
+- [ ] `get_todays_events_from_google(user_id: int) -> list[dict]`:
+  - Load refresh token from DB
+  - Exchange for access token via Google token endpoint
+  - Call `https://www.googleapis.com/calendar/v3/calendars/primary/events` with `timeMin/timeMax` for today
+  - Return list of `{title, start_time, end_time}` dicts
+
+### 8.4 — Sync job (runs nightly at midnight)
+- [ ] Register `sync_google_calendar` job in scheduler
+- [ ] Fetches tomorrow's events from Google Calendar
+- [ ] Upserts into `events` table with `source='google_calendar'`
+
+### 8.5 — Morning check-in update
+- [ ] Update `morning_checkin` job to pull today's events from `events` table (now populated from Google)
+- [ ] Include formatted schedule in the check-in message context
+
+### ✅ Phase 8 Verification Gate
+```
+1. Add an event to Google Calendar for today
+2. Wait for midnight sync (or trigger manually)
+3. Verify event appears in Supabase > events table with source='google_calendar'
+4. Morning check-in message includes today's event
+```
+
+---
+
+## Phase 9 — Strava Integration
