@@ -712,3 +712,138 @@ asyncio.run(test())
 ---
 
 ## Phase 9 — Strava Integration
+
+**Goal:** Gym sessions auto-logged from Strava; no manual gym check-in required.
+
+### 9.1 — Strava OAuth setup
+- [ ] Create app at strava.com/settings/api → get `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`
+- [ ] Add to `.env`
+
+### 9.2 — Strava OAuth endpoints
+- [ ] `GET /auth/strava` → redirect to Strava consent
+- [ ] `GET /auth/strava/callback` → exchange for refresh token, save to `users.strava_refresh_token`
+
+### 9.3 — Strava fetch function
+- [ ] `get_recent_strava_activities(user_id: int, days: int = 1) -> list[dict]`:
+  - Refresh access token using stored refresh token
+  - `GET https://www.strava.com/api/v3/athlete/activities?after=<yesterday_unix>`
+  - Return list of `{name, type, date, duration_sec, distance_m, average_heartrate, calories}` dicts
+
+### 9.4 — Strava sync job (runs daily at midnight)
+- [ ] Fetch yesterday's Strava activities
+- [ ] For each activity: `insert_log(type='strava_activity', data={...strava fields...})`
+- [ ] If gym session detected: also update the relevant goal's streak via `update_goal_streak`
+
+### 9.5 — Streak validation
+- [ ] Update streak logic: when calculating gym streak, check BOTH manual `habit` logs AND `strava_activity` logs for that day
+- [ ] This ensures streak is accurate even if Mahir forgot to manually check in
+
+### ✅ Phase 9 Verification Gate
+```
+1. Complete a workout and record it on Strava
+2. Wait for midnight sync (or trigger manually)
+3. Verify strava_activity row appears in Supabase > logs
+4. Ask Claude: "Did I train yesterday?" → Claude knows without you telling it
+```
+
+---
+
+## Phase 10 — Voice Message Support (Whisper)
+
+**Goal:** Send voice notes to the bot; they're transcribed and processed as text.
+
+### 10.1 — Whisper transcription
+- [ ] In `bot.py`, add `MessageHandler(filters.VOICE, handle_voice)`:
+  - Download voice file (`.oga`/`.ogg` format from Telegram)
+  - Save to temp file
+  - Call `openai.audio.transcriptions.create(model="whisper-1", file=audio_file)`
+  - Get back transcript string
+  - Pass to `call_claude()` same as text message
+  - Log: "Voice message transcribed: [n] words"
+  - Delete temp file
+
+### 10.2 — Voice-aware responses
+- [ ] Add note to system prompt: "Mahir sometimes sends voice notes transcribed by Whisper. Text may be informal."
+- [ ] Handle edge cases: very short voice notes, inaudible input (Whisper returns empty string)
+
+### ✅ Phase 10 Verification Gate
+```
+1. Record a voice note: "Log that I had a good gym session today, about 60 minutes"
+2. Bot transcribes and processes → Claude calls log_data, confirms gym session logged
+3. Verify in Supabase > logs that the habit row was created
+```
+
+---
+
+## Phase 11 — Apple Health (iPhone Shortcuts)
+
+**Goal:** Sleep duration, resting HR, and steps sync daily without any manual input.
+
+### 11.1 — Parsing endpoint
+- [ ] Add `POST /health/apple` FastAPI endpoint:
+  - Accepts JSON body: `{"sleep_hours": float, "resting_hr": int, "steps": int, "hrv": float | null, "date": "YYYY-MM-DD"}`
+  - Validates sender (Bearer token in Authorization header matching a secret in `.env`)
+  - Stores each metric as individual `logs` rows with `type='health_metric'`
+  - Returns `{"status": "logged"}`
+- [ ] Add `APPLE_HEALTH_TOKEN` to `.env.example`
+
+### 11.2 — iPhone Shortcut setup (manual, one-time)
+- [ ] On iPhone: Shortcuts app → New Shortcut → Add steps:
+  1. Get "Health Samples" for: Sleep (last night), Resting Heart Rate (latest), Steps (yesterday), HRV (latest if available)
+  2. Create Dictionary with those values + today's date
+  3. `Get Contents of URL` → POST to `http://<your-droplet-ip>:8000/health/apple` with JSON body and Authorization header
+  4. Set automation: run every morning at wake_time
+- [ ] Test Shortcut manually → confirm metrics appear in Supabase > logs
+
+### 11.3 — Health metrics in context
+- [ ] Update `build_system_prompt` to include last 7 days of `health_metric` logs in Tier 2
+- [ ] Add correlation logic to Claude system prompt: "When mood or energy is low, cross-reference sleep_hours from health_metric logs"
+
+### ✅ Phase 11 Verification Gate
+```
+1. Trigger the Shortcut manually
+2. Verify health_metric rows appear in Supabase with correct values
+3. Ask Claude: "How has my sleep been this week?"
+   → Claude gives accurate answer from actual Apple Health data
+```
+
+---
+
+## Phase 12 — Web Dashboard (Analytics & Data Visualisation)
+
+**Goal:** Read-only web dashboard to visualise all logged data. Build after Phase 4 once real data exists.
+
+> Detailed implementation checklist to be written at build time. This section captures the planned tech stack and scope agreed during initial planning.
+
+### Planned Stack
+- **Next.js 14** (App Router + TypeScript)
+- **Tailwind CSS**
+- **Recharts** — charts and trend visualisations
+- **Supabase JS client** — data via server components
+- **Vercel** — free hosting
+
+### Planned Views
+- [ ] Habit streak heatmap (GitHub contribution graph style)
+- [ ] Mood + energy trend lines over time
+- [ ] Goal progress cards (current streak, longest streak, weekly target %)
+- [ ] Weekly summary viewer (browse past summaries)
+- [ ] Body composition history (weight, muscle mass, body fat % over time)
+- [ ] Finance spend trend over time
+- [ ] Study hours over time
+- [ ] Latest brain snapshot viewer
+
+### Open Decisions (to resolve at build time)
+- Auth approach: single-password middleware vs Supabase Auth
+- Read-only vs allow some data entry from the dashboard
+- Same repo (`/dashboard`) vs separate repository
+
+---
+
+## Post-Build Maintenance Tasks
+
+- [ ] Add rate limiting: max 50 messages/day (prevent runaway API costs if something loops)
+- [ ] Monthly review: check Claude API costs in Anthropic console; tune prompt caching if over budget
+- [ ] Add Sentry or similar error tracking for production exceptions
+- [ ] Review and prune `conversations` table monthly (keep last 60 days; archive older rows)
+- [ ] Rotate API keys every 6 months
+- [ ] Test the GitHub Actions deploy pipeline after any droplet restart/rebuild
