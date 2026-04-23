@@ -1,5 +1,6 @@
 -- Life Agent -- Database Schema
 -- Run in Supabase SQL Editor (Dashboard -> SQL Editor -> New query)
+-- All tables created in the default 'public' schema (dedicated Supabase project per app)
 
 CREATE TABLE users (
     id                   SERIAL PRIMARY KEY,
