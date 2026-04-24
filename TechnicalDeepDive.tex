@@ -1,0 +1,597 @@
+\documentclass[12pt, a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{fontenc}
+\usepackage{inputenc}
+\usepackage{parskip}
+\usepackage{listings}
+\usepackage{mdframed}
+\usepackage{graphicx}
+
+\definecolor{accent}{RGB}{30, 30, 30}
+\definecolor{lightgray}{RGB}{245, 245, 245}
+\definecolor{midgray}{RGB}{120, 120, 120}
+\definecolor{darkblue}{RGB}{20, 40, 80}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=accent,
+    urlcolor=accent
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\textcolor{midgray}{\small Life Agent --- Technical Deep Dive}}
+\lhead{\textcolor{midgray}{\small Mahir}}
+\rfoot{\textcolor{midgray}{\small \thepage}}
+
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries}{}{0em}{}
+\titleformat{\subsubsection}{\normalsize\itshape}{}{0em}{}
+
+\lstset{
+    backgroundcolor=\color{lightgray},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    framerule=0pt,
+    rulecolor=\color{lightgray}
+}
+
+\begin{document}
+
+% ─── TITLE PAGE ───────────────────────────────────────────────────────────────
+\begin{titlepage}
+    \centering
+    \vspace*{3cm}
+    {\Huge\bfseries The Life Agent\par}
+    \vspace{0.5cm}
+    {\large\textcolor{midgray}{Technical Architecture Deep Dive}\par}
+    \vspace{1.5cm}
+    {\normalsize How Every Component Works, Why It Was Chosen, and How They Connect\par}
+    \vspace{0.5cm}
+    {\small\textcolor{midgray}{Prepared for: Mahir\par}}
+    \vspace{0.3cm}
+    {\small\textcolor{midgray}{Date: May 2026\par}}
+    \vfill
+    \begin{mdframed}[backgroundcolor=lightgray, linecolor=lightgray]
+    \centering
+    \small\textit{This document is a companion to \texttt{LifeAgent\_Requirements.tex}.\\
+    It explains the reasoning and mechanics behind every technical decision made\\
+    during the architecture phase. Read this before building.}
+    \end{mdframed}
+\end{titlepage}
+
+% ─── TABLE OF CONTENTS ────────────────────────────────────────────────────────
+\tableofcontents
+\newpage
+
+% ─── SECTION 1: OVERVIEW ──────────────────────────────────────────────────────
+\section{System Overview}
+
+The Life Agent is a personal AI system delivered entirely through Telegram. Its job is to act as a life coach, habit tracker, and data-driven advisor --- proactively messaging you, logging what you tell it, reasoning over your history, and holding you accountable to your own goals.
+
+The system has six distinct layers, each with a clear responsibility:
+
+\begin{longtable}{>{\bfseries}p{4cm} p{10cm}}
+\toprule
+Layer & Responsibility \\
+\midrule
+Interface & Telegram Bot --- where you talk to the agent \\
+\addlinespace
+Backend Core & Python + FastAPI --- the application logic that wires everything together \\
+\addlinespace
+Intelligence & Claude API --- the brain; all reasoning, advice, and data parsing \\
+\addlinespace
+Search & Tavily API --- live web search when Claude determines it is needed \\
+\addlinespace
+Data & Supabase (PostgreSQL) --- persistent storage for all personal data \\
+\addlinespace
+Infrastructure & Docker + DigitalOcean + GitHub Actions --- packaging, hosting, and deployment \\
+\bottomrule
+\end{longtable}
+
+Understanding how these layers interact is the key to understanding the system. Each section of this document takes one layer, explains what it is from first principles, describes exactly what it does in this project, and justifies why it was chosen over alternatives.
+
+% ─── SECTION 2: TELEGRAM ──────────────────────────────────────────────────────
+\section{The Interface Layer --- Telegram Bot}
+
+\subsection{What Telegram Bots Are}
+
+Telegram has a public Bot API. Any developer can create a bot via \texttt{@BotFather} on Telegram, receive a token, and then use that token to programmatically send and receive messages on behalf of the bot. From a user's perspective, a bot looks like a regular Telegram contact --- you message it, it replies.
+
+There are two ways to receive messages from the Telegram Bot API: \textbf{webhooks} and \textbf{long polling}.
+
+\subsubsection{Webhooks vs Long Polling}
+
+\textbf{Webhook}: Telegram pushes new messages to a URL you specify (e.g.\ \texttt{https://yourdomain.com/webhook}). Every time a user sends a message, Telegram makes an HTTP POST to that URL. This requires a publicly accessible server with a valid SSL certificate and a domain name.
+
+\textbf{Long polling}: Your server asks Telegram ``are there any new messages?'' every second. If yes, Telegram returns them. If no, Telegram holds the connection open for up to 30 seconds before returning empty. Your code then immediately asks again. No domain, no SSL certificate, no public URL required --- the connection is always outbound from your server.
+
+\subsubsection{Why We Use Long Polling}
+
+For a personal single-user bot running on a \$4/month server, long polling is the right choice. We do not need a domain name. We do not need an SSL certificate. Setup is minimal. The latency difference (milliseconds) is irrelevant at this scale. \texttt{python-telegram-bot} handles the polling loop automatically with one line of code.
+
+\subsection{Security Guard}
+
+The bot is deployed publicly --- anyone with the bot's username can send it a message. The security guard is a middleware that runs \textit{before} any handler:
+
+\begin{lstlisting}
+if update.effective_user.id != settings.TELEGRAM_USER_ID:
+    # Log the unauthorized attempt (user ID, username, message)
+    return  # silent drop — do not reply, do not process
+\end{lstlisting}
+
+Telegram user IDs are permanent numeric identifiers assigned to every account. By hardcoding your ID in the \texttt{.env} file, the bot responds to exactly one person on the planet. Every other message is silently dropped and logged.
+
+\subsection{Message Routing}
+
+Not every message should go through Claude. Sending a simple ``/done gym'' to Claude, waiting for an API call, and receiving a response adds 1--2 seconds of latency for something that should be instant. The message router categorises incoming messages before deciding how to handle them:
+
+\begin{longtable}{>{\bfseries}p{4cm} p{10cm}}
+\toprule
+Message Type & Handling \\
+\midrule
+Slash command (\texttt{/done}, \texttt{/goals}, \texttt{/record}) & Handled directly: DB write or DB read, no LLM call \\
+\addlinespace
+Voice note & Sent to Whisper for transcription first, then treated as free-form text \\
+\addlinespace
+File / photo & Downloaded, uploaded to Supabase Storage, URL passed to Claude with context \\
+\addlinespace
+Free-form text & Full tiered context assembled, Claude API called \\
+\bottomrule
+\end{longtable}
+
+This routing logic keeps the system fast for simple operations and reserves the LLM call for conversations that actually benefit from it.
+
+% ─── SECTION 3: BACKEND CORE ──────────────────────────────────────────────────
+\section{The Backend Core --- Python + FastAPI}
+
+\subsection{Why Python}
+
+Python is the dominant language for AI/ML tooling. Every major AI library --- \texttt{anthropic}, \texttt{openai}, \texttt{tavily-python}, \texttt{supabase} --- ships a Python SDK as its primary interface. The \texttt{python-telegram-bot} library handles the polling loop, update processing, and message sending cleanly. Building this in any other language would mean fighting upstream; Python is the natural fit.
+
+\subsection{Async Python}
+
+The entire backend is written using Python's \texttt{asyncio}. This matters because the bot spends most of its time \textit{waiting} --- waiting for Telegram to return messages, waiting for Claude to respond, waiting for Supabase to execute queries. In a synchronous program, waiting blocks the entire thread. In an async program, while one operation is waiting, other operations can run.
+
+Practically: if Claude is processing a message and a scheduler job fires at the same time, both can proceed concurrently on a single thread. The server does not need multiple threads or processes to handle this.
+
+Key async libraries used:
+\begin{itemize}[noitemsep]
+    \item \texttt{asyncpg} --- async PostgreSQL driver
+    \item \texttt{SQLAlchemy[asyncio]} --- async ORM layer over asyncpg
+    \item \texttt{python-telegram-bot} --- async Telegram client
+    \item \texttt{httpx} --- async HTTP client (used by Tavily, OAuth token refreshes)
+\end{itemize}
+
+\subsection{FastAPI}
+
+FastAPI is a Python web framework. In this project it serves a narrow purpose: three endpoints.
+
+\begin{lstlisting}
+GET  /health              # Docker healthcheck — returns {"status": "ok"}
+GET  /auth/google         # Redirects to Google OAuth consent screen
+GET  /auth/google/callback # Receives OAuth code, stores refresh token
+GET  /auth/strava         # Redirects to Strava OAuth consent screen
+GET  /auth/strava/callback # Receives OAuth code, stores refresh token
+POST /health/apple        # Receives Apple Health data from iPhone Shortcut
+\end{lstlisting}
+
+The health endpoint is polled by Docker every 30 seconds. If it stops responding, Docker automatically restarts the container. The OAuth endpoints are only visited once during initial setup. The Apple Health endpoint is called once every morning by an iPhone Shortcut.
+
+FastAPI was chosen because it is the fastest Python web framework to build with, uses Python type hints natively, and generates automatic documentation.
+
+\subsection{Config Management}
+
+\texttt{pydantic-settings} loads all configuration from the \texttt{.env} file into a typed \texttt{Settings} class at startup. If any required variable is missing or empty, the application raises a \texttt{ValueError} immediately with the field name and refuses to start. This is called \textbf{fail-fast}: it is better to crash loudly at startup than to silently fail mid-operation when a user is waiting for a response.
+
+% ─── SECTION 4: CLAUDE API ────────────────────────────────────────────────────
+\section{The Intelligence Layer --- Claude API and Tool Use}
+
+This is the most important section. Claude is the brain of the system --- everything else exists to give it the right information and execute its decisions.
+
+\subsection{How LLM API Calls Work}
+
+When you call the Claude API, you provide:
+\begin{enumerate}[noitemsep]
+    \item A \textbf{system prompt} --- instructions describing who Claude is, what it knows, and how it should behave
+    \item A \textbf{messages array} --- the conversation history (alternating user/assistant turns)
+    \item A \textbf{tools list} --- optional definitions of functions Claude can call
+    \item A \textbf{model} and \textbf{max\_tokens} setting
+\end{enumerate}
+
+Claude processes all of this and returns either a text response or a tool call request. The application handles the response and, if needed, calls Claude again with the result.
+
+\subsection{Tool Use --- The Core Mechanism}
+
+Tool Use (also called ``function calling'') is what makes the Life Agent more than a chatbot. Without tools, Claude can only \textit{talk}. With tools, Claude can \textit{act} --- search the web and write to the database.
+
+\subsubsection{How the Tool Use Loop Works}
+
+Here is the exact sequence when you ask ``What supplements help with sleep? Also log I did gym today.'':
+
+\begin{enumerate}
+    \item Backend assembles full context (goals, logs, health records, conversation history) and calls Claude with the message and tool definitions.
+
+    \item Claude reads the message and reasons: ``This question has two parts. I need live web research for the supplement question. I have enough information to log the gym session right now.''
+
+    \item Claude returns \texttt{stop\_reason = "tool\_use"} with two tool call blocks:
+    \begin{lstlisting}
+tool_use[0]: search_web { "query": "magnesium sleep quality research" }
+tool_use[1]: log_data   { "type": "habit", "date": "2026-05-16",
+                          "data": {"completed": true} }
+    \end{lstlisting}
+
+    \item The backend receives this. It does \textit{not} call Claude again yet. Instead, it executes both tool calls:
+    \begin{itemize}[noitemsep]
+        \item \texttt{search\_web} $\rightarrow$ calls Tavily API $\rightarrow$ returns formatted results with citations
+        \item \texttt{log\_data} $\rightarrow$ calls \texttt{insert\_log()} $\rightarrow$ writes row to Supabase $\rightarrow$ returns ``Gym session logged.''
+    \end{itemize}
+
+    \item The backend appends the tool results to the messages array and calls Claude a second time.
+
+    \item Claude now has the search results and the confirmation of the DB write. It generates its final response: supplement advice with citations, plus acknowledgement of the gym log.
+
+    \item \texttt{stop\_reason = "end\_turn"} --- the loop exits. Backend sends the response to Telegram.
+\end{enumerate}
+
+This loop can iterate multiple times if Claude needs to make further tool calls based on previous results. In practice, one or two iterations covers almost all cases.
+
+\subsubsection{Why Tool Use Instead of Text Parsing}
+
+The alternative to Tool Use is instructing Claude to output structured text that the backend then parses --- for example, ``if you want to log something, write \texttt{LOG: \{type: habit, ...\}} in your response.'' This approach is fragile: Claude might format it slightly differently, the parser might miss edge cases, and debugging failures is difficult.
+
+With Tool Use, Claude calls a precisely-typed function with a JSON schema. If the JSON is malformed, the API returns an error. If a required field is missing, validation catches it. The database write is explicit, typed, and reliable. This is why all database writes go through Claude's \texttt{log\_data} tool rather than any text parsing.
+
+\subsection{Prompt Caching}
+
+Every Claude API call includes the system prompt. For this project, the system prompt can be 2,000--5,000 tokens because it contains your full health profile, all goals, medical notes, and dietary restrictions. At \$3 per million input tokens (Claude Sonnet pricing), 10 messages per day over 30 days is roughly \$1.35/month just on system prompt tokens alone --- before counting the actual conversation.
+
+\textbf{Prompt caching} lets you mark part of the system prompt as cacheable. The first call that uses it pays full price. Subsequent calls within the 5-minute cache TTL pay 10\% of the original price for the cached portion. For a personal bot with daily check-ins and free-form conversation, the Tier 1 context (your static profile --- goals, health records, preferences) is almost never changing. Caching it reduces costs by up to 90\% on that portion.
+
+\begin{lstlisting}[language=Python]
+# The last content block in Tier 1 gets the cache marker:
+{"type": "text", "text": tier_1_text,
+ "cache_control": {"type": "ephemeral"}}
+\end{lstlisting}
+
+You can verify caching is working by checking the API response: \texttt{cache\_creation\_input\_tokens} appears on the first call; \texttt{cache\_read\_input\_tokens} appears on subsequent calls.
+
+\subsection{Why Claude Over GPT-4}
+
+\begin{longtable}{>{\bfseries}p{4cm} p{10cm}}
+\toprule
+Factor & Claude's Advantage \\
+\midrule
+Context window & 200K tokens vs GPT-4's 128K --- more history, more health records injected \\
+\addlinespace
+Reasoning & Superior at nuanced, multi-factor reasoning (cross-referencing blood test + mood + sleep simultaneously) \\
+\addlinespace
+Prompt caching & Anthropic's caching is mature and well-documented; OpenAI's equivalent is less predictable \\
+\addlinespace
+Tool use & Both are solid; Claude's implementation is clean and well-typed \\
+\addlinespace
+Tone & Claude's default writing tone is more conversational and direct --- better for a life coach persona \\
+\bottomrule
+\end{longtable}
+
+% ─── SECTION 5: TIERED CONTEXT ────────────────────────────────────────────────
+\section{Tiered Context Assembly}
+
+The tiered context system is the architectural decision that makes the agent feel like it genuinely knows you rather than starting fresh on every message. It is implemented in \texttt{context.py}.
+
+\subsection{The Problem It Solves}
+
+Claude has a fixed context window. You cannot inject every piece of data you have ever logged into every API call --- it would be too expensive and would eventually exceed the window size. The challenge is: \textit{what to include and what to leave out}.
+
+The answer is a time-decay hierarchy. Recent data is highly relevant to what you are asking right now. Data from six months ago is less directly relevant but still shapes the big picture. The tiered system allocates context window space according to recency and importance.
+
+\subsection{The Four Tiers}
+
+\textbf{Tier 1 --- Static Profile (prompt-cached, near-zero decay):}
+
+This is who you are, not what you did today. It includes: active goals with current streaks, latest blood test values, body composition data, medical notes (injuries, conditions, medications), dietary restrictions, active domain configs, and philosophical frameworks (Huberman protocols, Hamza principles). This changes rarely --- maybe once a week when a new blood test is uploaded or a goal is modified. Because it is stable, it is prompt-cached, making it nearly free to include on every call.
+
+\textbf{Tier 2 --- Recent Logs (14-day rolling window):}
+
+Every log entry from the last 14 days: habit completions, mood scores, food quality, finance spend, study sessions, Strava activities, Apple Health metrics. This is the granular daily data. 14 days is chosen because it covers two full weekly cycles --- enough to identify patterns (``you missed gym both Wednesdays'') without including stale noise.
+
+\textbf{Tier 3 --- Weekly Summaries (last 4 weeks):}
+
+Rather than raw logs from weeks 3 and 4, inject the agent-generated weekly summaries. These are compressed representations of each week --- habit percentages, mood averages, study totals, key observations. Summaries use far fewer tokens than raw logs while retaining the essential signal.
+
+\textbf{Tier 4 --- Brain Snapshot (weekly replacement):}
+
+Everything older than 4 weeks is compressed into a single brain snapshot: a structured JSON object containing goal momentum status, open decisions, health flags, momentum score, and patterns noticed over time. The snapshot is regenerated every Sunday night by Claude itself, based on all available data. It replaces raw data retrieval for long-term memory, keeping token cost flat regardless of how long you have been using the system.
+
+\subsection{Conversation History (Separate Array)}
+
+In addition to the system prompt (which contains the 4 tiers), the messages array includes the last 20 conversation turns. This gives Claude short-term memory within and across sessions --- it remembers what you said earlier in the conversation and can reference it.
+
+\subsection{Why This Design Is Powerful}
+
+After 6 months of use, the agent has:
+\begin{itemize}[noitemsep]
+    \item Tier 1: your current goals and full health profile
+    \item Tier 2: 14 days of granular logs
+    \item Tier 3: 4 weekly summaries (the most recent month at summary level)
+    \item Tier 4: a brain snapshot that encodes 5+ months of history compactly
+\end{itemize}
+
+It can answer questions like ``am I making progress compared to 3 months ago?'' by reading the brain snapshot, compare against current Tier 2 logs, and give a data-grounded answer --- without the token cost of storing 5 months of raw logs.
+
+% ─── SECTION 6: TAVILY ────────────────────────────────────────────────────────
+\section{The Search Layer --- Tavily API}
+
+\subsection{Why an AI Agent Needs Web Search}
+
+Claude's training data has a knowledge cutoff. Supplement research, fitness science, CFA exam strategies, and financial topics evolve continuously. For a personal life coach to give genuinely useful advice on current research, it needs access to live information.
+
+More importantly: without web search, Claude's answers are ``what I was trained on.'' With web search, they become ``what the current evidence says, from these specific sources.'' The difference is trust and verifiability.
+
+\subsection{Why Tavily Instead of Google or Bing}
+
+General-purpose search APIs (Google Custom Search, Bing Search) return raw HTML and metadata. Extracting useful content requires scraping, parsing, and cleaning --- a significant engineering effort, and one that breaks frequently as websites change their structure.
+
+Tavily is purpose-built for AI agents. It:
+\begin{itemize}[noitemsep]
+    \item Returns clean, structured JSON with title, URL, and extracted content snippet --- no scraping needed
+    \item Supports domain filtering (e.g.\ restrict search to \texttt{examine.com} for supplements)
+    \item Has an \texttt{advanced} search depth that extracts more content per result
+    \item Costs \$0.01 per search --- at 50--100 searches per month, this is \$0.50--\$1.00
+\end{itemize}
+
+\subsection{When Claude Calls Search vs When It Doesn't}
+
+Claude decides autonomously. The \texttt{search\_web} tool definition includes a description instructing Claude to use it only when live external information would meaningfully improve the response. In practice:
+
+\begin{longtable}{p{6cm} p{8cm}}
+\toprule
+\textbf{Claude calls search\_web} & \textbf{Claude does not call search\_web} \\
+\midrule
+``What's the research on creatine loading?'' & ``How is my gym streak going?'' \\
+``Best current CFA study strategy?'' & ``Am I on track for my savings goal?'' \\
+``What does low HRV mean for recovery?'' & ``What did I eat last week?'' \\
+``r/CFA advice for Fixed Income?'' & ``How has my mood been trending?'' \\
+\bottomrule
+\end{longtable}
+
+For scheduled proactive messages that always require web data (e.g.\ a weekly health tip), the backend triggers Tavily \textit{before} the Claude call and injects the results directly, rather than waiting for Claude to request it.
+
+% ─── SECTION 7: SUPABASE AND POSTGRESQL ──────────────────────────────────────
+\section{The Data Layer --- Supabase and PostgreSQL}
+
+\subsection{What Supabase Is}
+
+Supabase is a managed PostgreSQL hosting service. ``Managed'' means Supabase handles: server provisioning, PostgreSQL installation and configuration, automatic daily backups, connection pooling, SSL certificates, and monitoring. You get a production-grade database for free (up to 2 active projects on the free tier) without managing any of that infrastructure yourself.
+
+It also provides a web dashboard where you can browse your tables, run SQL queries, and inspect data without writing any code. For a personal life agent, this is genuinely useful --- you can see your logged data, verify records were stored correctly, and query your own history directly.
+
+\subsection{Why PostgreSQL Over SQLite or MongoDB}
+
+\textbf{vs SQLite:} SQLite is a file-based database. It does not support concurrent writes well, cannot be hosted separately from the application, has no managed backup solution, and does not support the \texttt{JSONB} column type we rely on heavily. SQLite is excellent for local development but wrong for a deployed personal system.
+
+\textbf{vs MongoDB:} MongoDB is a document database that stores JSON natively. The primary benefit it offers (flexible schema) is replicated by PostgreSQL's \texttt{JSONB} column type. PostgreSQL with JSONB gives you the flexibility of MongoDB's document model within the reliability and query power of a relational database. No reason to give up relational capabilities.
+
+\subsection{JSONB --- The Key Design Decision}
+
+\texttt{JSONB} is PostgreSQL's binary JSON column type. It stores arbitrary JSON objects with full support for indexing and querying individual fields within the JSON.
+
+Without JSONB, the schema would need separate tables for each log type: \texttt{habit\_logs}, \texttt{mood\_logs}, \texttt{food\_logs}, \texttt{finance\_logs}, \texttt{study\_logs}. Every new domain (e.g.\ ``cold showers'') would require a new table and a schema migration. This violates the DRY principle and creates unnecessary complexity.
+
+With JSONB, the \texttt{logs} table has a single \texttt{data} column that holds whatever JSON the log type requires:
+
+\begin{lstlisting}[language=SQL]
+-- All of these are rows in the same 'logs' table:
+-- type = 'habit', data = {"completed": true}
+-- type = 'mood',  data = {"score": 7, "energy": 6}
+-- type = 'finance', data = {"amount": 45, "category": "food delivery"}
+-- type = 'study', data = {"topic": "CFA", "duration_min": 90}
+\end{lstlisting}
+
+Adding a new tracking domain requires zero schema changes --- just start inserting rows with a new type value and a new JSONB shape.
+
+\subsection{The Seven Tables and Why Seven}
+
+The schema was designed by asking: what are the distinct entities in this system that need different retention policies, access patterns, and relationships?
+
+\begin{longtable}{>{\bfseries}p{3cm} p{11cm}}
+\toprule
+Table & Why It Exists \\
+\midrule
+users & Single row per person. Holds identity, preferences, OAuth tokens, and onboarding state. The root of all foreign key relationships. \\
+\addlinespace
+goals & Goals are structurally different from logs --- they are persistent, have streak counters, carry non-negotiable flags, and are referenced by many logs. A separate table is warranted. \\
+\addlinespace
+logs & All daily time-series captures. Habit completions, mood, food, finance, study, Strava, Apple Health. One table handles all via the JSONB pattern. \\
+\addlinespace
+records & Semi-permanent personal data: blood tests, body composition, medical notes, decisions. Different from logs because they are not daily time-series --- they are reference data that persists indefinitely and is injected into Tier 1 context. \\
+\addlinespace
+events & Calendar events are structurally different: they are future-dated, come from multiple sources (manual and Google Calendar), and are queried by upcoming date rather than by type. \\
+\addlinespace
+domains & Configuration rows for each life tracking area. Separating this into its own table enables zero-code extension of the system --- adding a new domain is an \texttt{INSERT}, not a code change. \\
+\addlinespace
+conversations & Full message history. Required for short-term memory across sessions. Kept separate because it is high-volume, time-ordered, and queried differently from everything else. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Indexes}
+
+Three indexes are created on the highest-traffic query patterns:
+
+\begin{lstlisting}[language=SQL]
+CREATE INDEX idx_logs_user_date
+    ON logs(user_id, date);
+-- Used every time we fetch logs for context assembly (by user + date range)
+
+CREATE INDEX idx_records_user_type_date
+    ON records(user_id, type, date);
+-- Used to fetch latest blood test, brain snapshot, weekly summaries
+
+CREATE INDEX idx_conversations_user_timestamp
+    ON conversations(user_id, timestamp);
+-- Used to fetch last 20 messages for each Claude call
+\end{lstlisting}
+
+Without these indexes, every context assembly query would scan the entire table. With them, queries that currently take 50--200ms run in under 5ms.
+
+\subsection{Supabase Storage}
+
+When you send a blood test PDF or a photo to the bot, the file is stored in Supabase Storage (a managed object store, similar to AWS S3). The \texttt{records} table stores only the URL pointing to the file, not the file itself. This keeps the database fast and small while making files reliably accessible and backed up.
+
+% ─── SECTION 8: APSCHEDULER ──────────────────────────────────────────────────
+\section{The Scheduling Layer --- APScheduler}
+
+\subsection{What APScheduler Does}
+
+APScheduler (Advanced Python Scheduler) is a library that runs scheduled jobs inside a Python process. It manages a list of jobs, each with a trigger (cron, interval, or one-shot), and fires them at the right time.
+
+\subsection{In-Process vs External Scheduling}
+
+The alternative approaches were:
+
+\textbf{System cron jobs:} Unix cron can run Python scripts on a schedule. But each execution starts a new Python process, re-imports all modules, re-establishes the database connection, and terminates. It cannot share state with the running bot. Managing cron syntax for complex schedules (e.g.\ ``fire at the user's wake time in their timezone'') is difficult.
+
+\textbf{AWS Lambda / cloud functions:} Serverless functions that fire on a schedule. Introduces significant complexity: a separate deployment, IAM permissions, cold start latency, and cost management. Overkill for a personal tool.
+
+\textbf{APScheduler in-process:} The scheduler runs inside the same Python process as the bot. It shares the database connection, the Telegram bot client, and all configuration. Adding a new scheduled job is one function and one registration line. Timezone-aware scheduling is built in. This is the right fit.
+
+\subsection{The Seven Scheduled Jobs}
+
+\begin{longtable}{>{\bfseries}p{4cm} p{3cm} p{7cm}}
+\toprule
+Job & Trigger & What It Does \\
+\midrule
+Morning check-in & Daily @ wake\_time (user timezone) & Pulls yesterday's performance, today's events, and sends a personalised start-of-day message \\
+\addlinespace
+Evening review & Daily @ sleep\_time $-$ 2h & Covers all active domains: gym, food, mood, energy, spend, study \\
+\addlinespace
+Weekly summary & Sunday @ 20:00 & 7-day habit/mood/study/finance summary; saved as a record \\
+\addlinespace
+Brain snapshot & Sunday @ 20:30 & Rewrites compressed long-term memory; saved as a record \\
+\addlinespace
+Nudge check & Every 6 hours & Checks domain nudge\_after\_days; sends nudge if gap exceeded \\
+\addlinespace
+Google Calendar sync & Daily @ midnight & Pulls tomorrow's events into the events table \\
+\addlinespace
+Strava sync & Daily @ 01:00 & Pulls yesterday's activities into the logs table \\
+\bottomrule
+\end{longtable}
+
+% ─── SECTION 9: DOCKER ────────────────────────────────────────────────────────
+\section{The Infrastructure Layer --- Docker}
+
+\subsection{What Docker Is}
+
+Docker packages an application and all its dependencies (Python version, libraries, system packages) into a container image. When you run the container, it runs identically regardless of the host machine. The same container that runs on your laptop runs on the DigitalOcean droplet.
+
+\subsection{Why Docker for a Personal Project}
+
+You might ask: why not just run \texttt{python main.py} directly on the server? The practical reasons:
+
+\textbf{Dependency isolation:} The server's Python installation is separate from the application's. No conflicts between system Python packages and the bot's requirements. No ``it worked on my machine'' problems.
+
+\textbf{Automatic restart:} Docker's \texttt{restart: always} policy means the container automatically restarts if it crashes or if the server reboots. Without Docker, you would need to configure a systemd service to do the same --- more setup, more ongoing maintenance.
+
+\textbf{Healthcheck:} Docker can poll the \texttt{/health} FastAPI endpoint every 30 seconds. If it fails 3 times in a row, Docker marks the container unhealthy and restarts it. This self-healing behaviour requires zero monitoring infrastructure.
+
+\textbf{Reproducibility:} \texttt{docker-compose up --build} produces an identical environment every time. When the CI/CD pipeline deploys, there is no ambiguity about what version of Python or what library version is running.
+
+\subsection{The Setup}
+
+\begin{lstlisting}
+# Dockerfile
+FROM python:3.12-slim        # slim = no unnecessary system packages
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+CMD ["python", "main.py"]
+\end{lstlisting}
+
+\begin{lstlisting}
+# docker-compose.yml
+services:
+  app:
+    build: .
+    env_file: .env           # secrets injected at runtime, never baked in
+    restart: always
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen(
+              'http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+\end{lstlisting}
+
+Note: the \texttt{.env} file is injected at \textit{runtime} via \texttt{env\_file}. It is never copied into the image. The image itself contains zero secrets.
+
+\subsection{Why DigitalOcean Droplet}
+
+The application needs to be always-on. It is polling Telegram every second and running scheduled jobs at specific times. This rules out:
+
+\textbf{Serverless (AWS Lambda, Vercel functions):} Functions spin up on demand and terminate after execution. They cannot hold an open polling connection and cannot fire jobs at arbitrary times without a separate trigger service.
+
+\textbf{PaaS (Heroku, Railway):} These work but add cost abstraction. A \$4/month DigitalOcean droplet is the cheapest always-on option and gives full control over the environment.
+
+The smallest DigitalOcean droplet (512MB RAM, 1 vCPU) is sufficient: the Python process uses approximately 80--150MB of RAM at steady state. The bot handles one user with low concurrency. No scaling is needed.
+
+% ─── SECTION 10: CI/CD ────────────────────────────────────────────────────────
+\section{The Deployment Pipeline --- GitHub Actions}
+
+\subsection{What CI/CD Means Here}
+
+CI/CD stands for Continuous Integration / Continuous Deployment. In this project it means: every time you push code to the \texttt{main} branch on GitHub, the server automatically pulls the new code and restarts the bot. You never need to manually SSH into the server to deploy.
+
+\subsection{How the Pipeline Works}
+
+\begin{lstlisting}
+# .github/workflows/deploy.yml
+name: Deploy
+on:
+  push:
+    branches: [main]          # triggers on every push to main
+jobs:
+  deploy:
+    runs-on: ubuntu-latest    # GitHub provides a fresh Ubuntu VM
+    steps:
+      - name: Deploy to droplet
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DROPLET_IP }}
+          username: lifeagent
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/lifeagent/app
+            git pull origin main
+            docker-compose up --build -d
+\end{lstlisting}
+
+Step by step:
+\begin{enumerate}[noitemsep]
+    \item You run \texttt{git push origin main} locally
+    \item GitHub detects the push and spawns a fresh Ubuntu VM
+    \item The \texttt{appleboy/ssh-action} uses your stored private key to SSH into the droplet
+    \item On the droplet: pulls the latest code, rebuilds the Docker image, restarts the container in detached mode (\texttt{-d})
+    \item The old container shuts down, the new one starts --- downtime is typically under 10 seconds
+\end{enumerate}
+
+\subsection{Security of the Pipeline}
+
+\texttt{DROPLET\_IP} and \texttt{SSH\_PRIVATE\_KEY} are stored as GitHub Actions secrets, not in the repository. They are injected into the VM at runtime and are never visible in logs. The droplet has a dedicated \texttt{lifeagent} user (not root) with only the permissions needed to run the bot.
+
+% ─── SECTION 11: OAUTH 2.0 AND INTEGRATIONS ───────────────────────────────────
+
+\end{document}
