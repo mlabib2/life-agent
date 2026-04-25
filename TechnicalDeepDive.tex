@@ -593,5 +593,204 @@ Step by step:
 \texttt{DROPLET\_IP} and \texttt{SSH\_PRIVATE\_KEY} are stored as GitHub Actions secrets, not in the repository. They are injected into the VM at runtime and are never visible in logs. The droplet has a dedicated \texttt{lifeagent} user (not root) with only the permissions needed to run the bot.
 
 % ─── SECTION 11: OAUTH 2.0 AND INTEGRATIONS ───────────────────────────────────
+\section{Third-Party Integrations --- OAuth 2.0, Strava, Google Calendar, Apple Health}
+
+\subsection{OAuth 2.0 Explained}
+
+OAuth 2.0 is the industry-standard protocol for authorising one application to access another application's API on behalf of a user, without sharing the user's password. The flow for Google Calendar works as follows:
+
+\begin{enumerate}
+    \item User visits \texttt{/auth/google} on the Life Agent server
+    \item Server redirects to Google's OAuth consent screen (``Life Agent wants to access your Google Calendar'')
+    \item User clicks Allow
+    \item Google redirects back to \texttt{/auth/google/callback} with a short-lived \textbf{authorisation code}
+    \item Server exchanges the authorisation code for two tokens: a short-lived \textbf{access token} (valid 1 hour) and a long-lived \textbf{refresh token} (valid indefinitely until revoked)
+    \item Server stores the refresh token in the \texttt{users} table
+    \item From now on: whenever the server needs to call the Google Calendar API, it uses the stored refresh token to obtain a fresh access token automatically. The user never has to log in again.
+\end{enumerate}
+
+Strava uses the same pattern. This is a one-time setup per integration.
+
+\subsection{Google Calendar}
+
+A scheduled job runs at midnight and calls \texttt{https://www.googleapis.com/calendar/v3/calendars/primary/events} with a time window for the next day. Events are upserted into the \texttt{events} table with \texttt{source = 'google\_calendar'}. The morning check-in job then reads from this table when building its message.
+
+The practical effect: every morning, the agent already knows what is in your calendar. It can say ``You have two back-to-back meetings from 10--12 today --- probably not the best day for a hard gym session.''
+
+\subsection{Strava}
+
+A scheduled job runs at 1am and calls the Strava Activities API for the previous day. Each activity is stored as a \texttt{logs} row with \texttt{type = 'strava\_activity'} and a \texttt{data} JSONB containing: activity name, type, duration, distance, average heart rate, and calories. When calculating gym streaks, the system checks both manual habit logs and Strava activity logs --- so a streak is never broken just because you forgot to manually check in.
+
+\subsection{Apple Health}
+
+HealthKit (Apple's health data framework) has no server-side API. Apple deliberately prevents third parties from pulling health data from their servers. The workaround is an iPhone Shortcut:
+
+\begin{enumerate}[noitemsep]
+    \item The Shortcuts app reads HealthKit data directly on-device (sleep duration, resting heart rate, steps, HRV)
+    \item It constructs a JSON payload with those values and today's date
+    \item It POSTs the payload to \texttt{http://<droplet-ip>:8000/health/apple} with a static Bearer token for authentication
+    \item The FastAPI endpoint validates the token and stores each metric as a \texttt{logs} row with \texttt{type = 'health\_metric'}
+    \item The Shortcut is set to run automatically every morning at wake time
+\end{enumerate}
+
+This is a zero-cost workaround for a problem that otherwise has no clean solution. After one-time setup, it is fully automatic.
+
+% ─── SECTION 12: WHISPER ─────────────────────────────────────────────────────
+\section{Voice Transcription --- OpenAI Whisper}
+
+Telegram supports voice messages. After a gym session, the last thing you want to do is type. The Whisper integration lets you send a 30-second voice note and have it processed exactly as if you had typed it.
+
+\textbf{Flow:}
+\begin{enumerate}[noitemsep]
+    \item Telegram sends the voice message as an audio file (\texttt{.oga} format, Opus codec)
+    \item Bot downloads the file to a temporary location
+    \item File is passed to \texttt{openai.audio.transcriptions.create(model="whisper-1")}
+    \item Whisper returns a text transcript (typically in 1--3 seconds)
+    \item Transcript is processed identically to a typed message --- the rest of the pipeline does not know or care that it started as audio
+    \item Temp file is deleted
+\end{enumerate}
+
+Whisper is OpenAI's open-source speech-to-text model. The API version (\texttt{whisper-1}) costs \$0.006 per minute. A 30-second voice note costs \$0.003. At 5 voice notes per day, the monthly cost is under \$0.50.
+
+% ─── SECTION 13: DASHBOARD ────────────────────────────────────────────────────
+\section{The Dashboard --- Next.js, Recharts, Vercel (Phase 12)}
+
+The dashboard is a read-only web application that visualises all data stored in Supabase. It is built \textit{after} the core bot is working and has real data to display.
+
+\subsection{Next.js 14 (App Router)}
+
+Next.js is a React framework with server-side rendering capabilities. The App Router (introduced in Next.js 13, matured in 14) lets you fetch data directly in server components --- React components that run on the server and return pre-rendered HTML.
+
+For this dashboard, server components connect directly to Supabase and fetch data before the page is sent to the browser. The browser receives a fully rendered page with no loading spinners. This is the right approach for a data-heavy analytics dashboard.
+
+\subsection{Recharts}
+
+Recharts is a React charting library built on D3. It provides composable chart components: \texttt{<LineChart>}, \texttt{<BarChart>}, \texttt{<AreaChart>}. For a dashboard with mood trend lines, habit streak data, and body composition history over time, Recharts gives good-looking results with minimal configuration.
+
+\subsection{Vercel}
+
+Vercel is the hosting platform built by the creators of Next.js. Deploying a Next.js application to Vercel is: connect GitHub repo, select the dashboard directory, click deploy. Free tier is sufficient for a personal dashboard with one user. Vercel handles SSL, CDN distribution, and automatic redeployment on push.
+
+\subsection{Auth Approach (To Be Decided at Build Time)}
+
+Since the dashboard is personal, the simplest auth is Next.js middleware that checks for a password cookie. A more robust option is Supabase Auth with Row Level Security, which would also make the data access cleaner. This decision is deferred to Phase 12.
+
+% ─── SECTION 14: SECURITY ─────────────────────────────────────────────────────
+\section{Security Architecture}
+
+\subsection{What Is Protected and How}
+
+\begin{longtable}{>{\bfseries}p{4cm} p{10cm}}
+\toprule
+Concern & Protection \\
+\midrule
+API keys and secrets & Stored only in \texttt{.env} on the server and in GitHub Actions secrets. Never in the repository. \texttt{.gitignore} explicitly excludes \texttt{.env}. \\
+\addlinespace
+Bot access & Security guard in \texttt{bot.py} checks every incoming message against \texttt{TELEGRAM\_USER\_ID}. Any other sender is silently dropped and logged. \\
+\addlinespace
+Database access & Supabase credentials (service role key) are server-side only. Never exposed to the browser. Dashboard uses server components --- credentials stay on the server. \\
+\addlinespace
+OAuth tokens & Stored in the \texttt{users} table (encrypted at rest by Supabase). Access tokens are short-lived and never stored --- only refresh tokens are persisted. \\
+\addlinespace
+Apple Health endpoint & Protected by a static Bearer token (\texttt{APPLE\_HEALTH\_TOKEN} in \texttt{.env}). The iPhone Shortcut includes this token in the Authorization header. \\
+\addlinespace
+Docker image & Secrets are not baked into the image. They are injected via \texttt{env\_file} at container start time. The image itself is safe to publish. \\
+\bottomrule
+\end{longtable}
+
+\subsection{What the Public GitHub Repo Contains}
+
+The public repository contains only code and documentation. It does not and will never contain: \texttt{.env} files, database credentials, OAuth tokens, API keys, \texttt{*.db} files, or any personal data. Data lives exclusively on the Supabase-managed PostgreSQL instance and Supabase Storage, both of which are access-controlled separately.
+
+% ─── SECTION 15: COST ARCHITECTURE ───────────────────────────────────────────
+\section{Cost Architecture}
+
+\subsection{Why It Costs So Little}
+
+The system costs \$8--12 per month. This is not an accident --- each component was chosen with cost in mind.
+
+\begin{longtable}{>{\bfseries}p{4.5cm} p{2.5cm} p{7cm}}
+\toprule
+Component & Est.\ Cost & Why It Is Cheap \\
+\midrule
+DigitalOcean Droplet & \$4/month & Smallest droplet; single-user app with no scaling requirements \\
+\addlinespace
+Claude API & \$2--4/month & Prompt caching cuts Tier 1 token cost by up to 90\%; only $\sim$10 interactions/day \\
+\addlinespace
+Tavily & \$0.50--1/month & Only fires when Claude determines live search is needed; $\sim$50 searches/month \\
+\addlinespace
+Supabase & \$0 & Free tier; one project; well within storage and row limits \\
+\addlinespace
+Whisper & \$0.50/month & \$0.006/min; typically under 5 voice notes per day \\
+\addlinespace
+Vercel (dashboard) & \$0 & Free tier; one user; no bandwidth concerns \\
+\midrule
+\textbf{Total} & \textbf{\$7--9/month} & \\
+\bottomrule
+\end{longtable}
+
+\subsection{Prompt Caching Economics}
+
+Without caching: each of 10 daily messages includes a 3,000-token system prompt. At Claude Sonnet pricing of \$3 per million input tokens:
+$$10 \text{ messages} \times 3000 \text{ tokens} \times 30 \text{ days} = 900{,}000 \text{ tokens} \approx \$2.70/\text{month}$$
+
+With prompt caching (Tier 1 is 90\% of the system prompt, cached reads cost 10\%):
+$$\text{Cache misses (first call/day)}: 10\% \times \$2.70 \approx \$0.27$$
+$$\text{Cache reads (remaining calls)}: 90\% \times \$2.70 \times 10\% \approx \$0.24$$
+$$\text{Total}: \approx \$0.51/\text{month on system prompt tokens}$$
+
+This is a 5x cost reduction on the most expensive part of the token budget.
+
+% ─── SECTION 16: HOW IT ALL CONNECTS ──────────────────────────────────────────
+\section{How It All Connects --- A Complete Walk-Through}
+
+To solidify the full picture, here is what happens from the moment you send ``I had a rough gym session today, felt tired. Also my iron supplement arrived.'' to the moment you receive a reply.
+
+\begin{enumerate}
+    \item \textbf{Telegram} receives your message and holds it in its queue.
+
+    \item \textbf{bot.py} polls Telegram (as it does every second) and retrieves the message.
+
+    \item \textbf{Security guard} checks: is \texttt{update.effective\_user.id == TELEGRAM\_USER\_ID}? Yes. Proceed.
+
+    \item \textbf{Message router} classifies: this is free-form text. No slash command, no voice, no file.
+
+    \item \textbf{Bot sends a ``typing'' action} to Telegram so you see the ``...'' indicator while processing.
+
+    \item \textbf{context.py} assembles the system prompt:
+    \begin{itemize}[noitemsep]
+        \item Tier 1 (prompt-cached): your goals including ``gym 4x/week'', latest blood test showing low iron, medical note about knee, dietary profile, Huberman protocols
+        \item Tier 2: logs from last 14 days --- shows you hit gym Monday, Wednesday, missed Thursday
+        \item Tier 3: last 4 weekly summaries --- gym consistency was 75\%, 50\%, 75\%, 88\%
+        \item Tier 4: brain snapshot --- ``gym momentum: on track. Health flag: iron was 14 µmol/L (low) in April labs.''
+    \end{itemize}
+
+    \item \textbf{db.py} fetches the last 20 conversation messages for the messages array.
+
+    \item \textbf{Claude API is called} with the assembled system prompt, conversation history, your message, and the tool definitions.
+
+    \item \textbf{Claude reasons:} ``Felt tired + rough gym session. Low iron flag in health profile and brain snapshot. Iron supplement mentioned. I should log the gym session. I don't need to search the web for this --- I have enough context.''
+
+    \item Claude returns \texttt{stop\_reason = "tool\_use"} with one tool call:
+    \begin{lstlisting}
+log_data { "type": "habit", "date": "2026-05-16",
+           "data": {"completed": true, "quality": "low energy"},
+           "notes": "Felt tired, rough session." }
+    \end{lstlisting}
+
+    \item \textbf{tools.py} calls \texttt{insert\_log()} in db.py. The row is written to Supabase. Streak counter is checked: this is gym session 3 this week, target is 4.
+
+    \item \textbf{tool\_result} is appended to the messages array and Claude is called again.
+
+    \item \textbf{Claude generates its final response:} ``Logged --- rough session still counts, well done for showing up. On that iron supplement: consistent daily timing matters more than anything else for absorption (take with vitamin C, avoid calcium within 2 hours). Your April labs showed iron at 14 µmol/L which is on the low side --- that directly explains the fatigue you've been logging on gym days. If you're consistent with the supplement for 8 weeks you should feel a noticeable difference. You're 3/4 on gym this week --- one more session to hit your target.''
+
+    \item \textbf{bot.py} saves both turns (your message, Claude's response) to the \texttt{conversations} table via db.py.
+
+    \item \textbf{Telegram delivers the response} to your phone.
+\end{enumerate}
+
+Total elapsed time from your message to the reply: typically 3--6 seconds, dominated by the Claude API call. Two Claude calls were made (tool use loop). One database write was made. Zero web searches were triggered (Claude correctly determined it had enough context).
+
+\textit{This is the system working exactly as designed.}
 
 \end{document}
