@@ -1,5 +1,7 @@
 # Life Agent — Architecture Diagrams
 
+> Last updated: April 2026. All diagrams reflect the final planned architecture.
+
 ---
 
 ## 1. System Overview
