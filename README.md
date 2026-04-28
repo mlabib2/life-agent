@@ -58,6 +58,8 @@ Claude API    Supabase     Tavily API
 
 **Estimated monthly cost:** $8–12/month (droplet + API usage with prompt caching)
 
+> Prompt caching (Anthropic) reduces input token cost by up to 90% on the static Tier 1 profile. Cost estimate at May 2026 API pricing.
+
 ---
 
 ## Data Model
