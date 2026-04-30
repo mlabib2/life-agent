@@ -40,3 +40,23 @@ def get_user(telegram_user_id: int) -> dict | None:
 
 def update_user(user_id: int, fields: dict) -> None:
     get_db().table("users").update(fields).eq("id", user_id).execute()
+
+
+# --- Conversations ---
+
+def save_message(user_id: int, role: str, content: str) -> None:
+    get_db().table("conversations").insert({
+        "user_id": user_id,
+        "role": role,
+        "content": content,
+    }).execute()
+
+
+def get_recent_messages(user_id: int, limit: int = 20) -> list[dict]:
+    result = get_db().table("conversations") \
+        .select("role, content, timestamp") \
+        .eq("user_id", user_id) \
+        .order("timestamp", desc=True) \
+        .limit(limit) \
+        .execute()
+    return list(reversed(result.data))
