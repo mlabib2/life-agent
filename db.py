@@ -1,4 +1,5 @@
 import logging
+from datetime import date, datetime, timezone, timedelta
 from supabase import create_client, Client
 from config import settings
 
@@ -60,3 +61,62 @@ def get_recent_messages(user_id: int, limit: int = 20) -> list[dict]:
         .limit(limit) \
         .execute()
     return list(reversed(result.data))
+
+
+# --- Logs ---
+
+def write_log(user_id: int, log_type: str, data: dict, notes: str = "", log_date: date | None = None) -> dict:
+    row = {
+        "user_id": user_id,
+        "type": log_type,
+        "date": (log_date or date.today()).isoformat(),
+        "data": data,
+        "notes": notes,
+    }
+    result = get_db().table("logs").insert(row).execute()
+    return result.data[0]
+
+
+def get_recent_logs(user_id: int, days: int = 14) -> list[dict]:
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    result = get_db().table("logs") \
+        .select("*") \
+        .eq("user_id", user_id) \
+        .gte("date", since) \
+        .order("date", desc=True) \
+        .execute()
+    return result.data
+
+
+# --- Records ---
+
+def write_record(user_id: int, record_type: str, data: dict, notes: str = "", source: str = "manual") -> dict:
+    row = {
+        "user_id": user_id,
+        "type": record_type,
+        "date": date.today().isoformat(),
+        "data": data,
+        "notes": notes,
+        "source": source,
+    }
+    result = get_db().table("records").insert(row).execute()
+    return result.data[0]
+
+
+def get_records(user_id: int, record_type: str) -> list[dict]:
+    result = get_db().table("records") \
+        .select("*") \
+        .eq("user_id", user_id) \
+        .eq("type", record_type) \
+        .order("date", desc=True) \
+        .execute()
+    return result.data
+
+
+# --- Goals ---
+
+def get_goals(user_id: int, active_only: bool = True) -> list[dict]:
+    query = get_db().table("goals").select("*").eq("user_id", user_id)
+    if active_only:
+        query = query.eq("active", True)
+    return query.order("created_at").execute().data
