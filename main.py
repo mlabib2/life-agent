@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import uvicorn
 from fastapi import FastAPI
 
+from bot import build_app
 from db import init_db
 
 logging.basicConfig(
@@ -13,11 +14,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+telegram_app = build_app()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    await telegram_app.initialize()
+    await telegram_app.start()
+    await telegram_app.updater.start_polling()
+    logger.info("Bot polling started")
     yield
+    await telegram_app.updater.stop()
+    await telegram_app.stop()
+    await telegram_app.shutdown()
+    logger.info("Bot stopped")
 
 
 app = FastAPI(lifespan=lifespan)
