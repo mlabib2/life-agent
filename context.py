@@ -1,4 +1,4 @@
-from db import get_goals, get_recent_logs
+from db import get_goals, get_recent_logs, get_recent_messages
 
 SYSTEM_PROMPT = """You are Mahir's personal AI life agent — a data-driven accountability coach and advisor available 24/7 via Telegram.
 
@@ -75,3 +75,14 @@ def build_context(user: dict) -> str:
         sections.append("## Last 14 Days of Logs\nNo logs yet.")
 
     return "\n\n".join(sections)
+
+
+def build_messages(user: dict, new_message: str) -> list[dict]:
+    user_id = user["id"]
+    history = get_recent_messages(user_id, limit=20)
+
+    messages = []
+    for msg in history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": new_message})
+    return messages
