@@ -1,3 +1,8 @@
+from datetime import date
+from tavily import TavilyClient
+from config import settings
+from db import write_log
+
 TOOLS = [
     {
         "name": "log_data",
@@ -47,3 +52,28 @@ TOOLS = [
         },
     },
 ]
+
+
+def handle_tool_call(tool_name: str, tool_input: dict, user_id: int) -> str:
+    if tool_name == "log_data":
+        log_date = date.fromisoformat(tool_input["date"]) if tool_input.get("date") else date.today()
+        write_log(
+            user_id=user_id,
+            log_type=tool_input["type"],
+            data=tool_input["data"],
+            notes=tool_input.get("notes", ""),
+            log_date=log_date,
+        )
+        return f"Logged: {tool_input['type']} — {tool_input['data']}"
+
+    if tool_name == "search_web":
+        client = TavilyClient(api_key=settings.tavily_api_key)
+        response = client.search(tool_input["query"], max_results=5)
+        results = response.get("results", [])
+        formatted = "\n\n".join(
+            f"**{r['title']}**\n{r['content']}\nSource: {r['url']}"
+            for r in results
+        )
+        return formatted or "No results found."
+
+    return f"Unknown tool: {tool_name}"
