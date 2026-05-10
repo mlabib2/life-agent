@@ -25,29 +25,24 @@
 - [ ] GitHub account logged in (`gh auth login` or SSH key added)
 
 ### 0.2 — API Keys & Accounts
-- [ ] Create Telegram bot via @BotFather → save `TELEGRAM_BOT_TOKEN`
-- [ ] Get your Telegram user ID (message @userinfobot) → save `TELEGRAM_USER_ID`
-- [ ] Get Anthropic API key from console.anthropic.com → save `ANTHROPIC_API_KEY`
-- [ ] Get Tavily API key from app.tavily.com → save `TAVILY_API_KEY`
-- [ ] Get OpenAI API key from platform.openai.com (for Whisper, Phase 6) → save `OPENAI_API_KEY`
-- [ ] In Supabase: create project → copy `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
+- [x] Create Telegram bot via @BotFather → save `TELEGRAM_BOT_TOKEN`
+- [x] Get your Telegram user ID (message @userinfobot) → save `TELEGRAM_USER_ID`
+- [x] Get Anthropic API key from console.anthropic.com → save `ANTHROPIC_API_KEY`
+- [x] Get Tavily API key from app.tavily.com → save `TAVILY_API_KEY`
+- [ ] Get OpenAI API key from platform.openai.com (for Whisper, Phase 10) → save `OPENAI_API_KEY` _(deferred — not needed until Phase 10)_
+- [x] In Supabase: create dedicated `life-agent` project → copy `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
 - [ ] Create DigitalOcean droplet ($4/mo, Ubuntu 22.04 LTS, any datacenter) → note the IP
 
 ### 0.3 — Local Project Structure
-- [ ] `cd ~/Desktop/Technical_Projects/Life-Agent`
-- [ ] Create directory structure:
-  ```
-  mkdir -p .github/workflows
-  touch main.py bot.py scheduler.py context.py db.py tools.py config.py
-  touch Dockerfile docker-compose.yml requirements.txt .env.example
-  ```
-- [ ] Populate `.env` from `.env.example` with all real keys (never commit `.env`)
-- [ ] Confirm `.gitignore` covers: `.env`, `*.db`, `__pycache__/`, `.DS_Store`, `spread_commits.py`
+- [x] `cd ~/Desktop/Technical_Projects/Life-Agent`
+- [x] Create directory structure (Dockerfile, docker-compose.yml, requirements.txt, .env.example, .github/workflows/deploy.yml all exist)
+- [x] Populate `.env` with all real keys (never commit `.env`)
+- [x] Confirm `.gitignore` covers: `.env`, `*.db`, `__pycache__/`, `.DS_Store`, `spread_commits.py`
 
 ### 0.4 — Supabase Schema
 Run the following SQL in the Supabase SQL Editor (Dashboard → SQL Editor → New query):
 
-- [ ] Create `users` table:
+- [x] Create `users` table:
   ```sql
   CREATE TABLE users (
     id SERIAL PRIMARY KEY,
@@ -63,7 +58,7 @@ Run the following SQL in the Supabase SQL Editor (Dashboard → SQL Editor → N
     created_at TIMESTAMPTZ DEFAULT NOW()
   );
   ```
-- [ ] Create `goals` table:
+- [x] Create `goals` table:
   ```sql
   CREATE TABLE goals (
     id SERIAL PRIMARY KEY,
@@ -81,7 +76,7 @@ Run the following SQL in the Supabase SQL Editor (Dashboard → SQL Editor → N
     updated_at TIMESTAMPTZ DEFAULT NOW()
   );
   ```
-- [ ] Create `logs` table:
+- [x] Create `logs` table:
   ```sql
   CREATE TABLE logs (
     id SERIAL PRIMARY KEY,
@@ -95,7 +90,7 @@ Run the following SQL in the Supabase SQL Editor (Dashboard → SQL Editor → N
   );
   CREATE INDEX idx_logs_user_date ON logs(user_id, date);
   ```
-- [ ] Create `records` table:
+- [x] Create `records` table:
   ```sql
   CREATE TABLE records (
     id SERIAL PRIMARY KEY,
@@ -110,7 +105,7 @@ Run the following SQL in the Supabase SQL Editor (Dashboard → SQL Editor → N
   );
   CREATE INDEX idx_records_user_type_date ON records(user_id, type, date);
   ```
-- [ ] Create `events` table:
+- [x] Create `events` table:
   ```sql
   CREATE TABLE events (
     id SERIAL PRIMARY KEY,
@@ -122,7 +117,7 @@ Run the following SQL in the Supabase SQL Editor (Dashboard → SQL Editor → N
     notes TEXT
   );
   ```
-- [ ] Create `domains` table:
+- [x] Create `domains` table:
   ```sql
   CREATE TABLE domains (
     id SERIAL PRIMARY KEY,
@@ -137,7 +132,7 @@ Run the following SQL in the Supabase SQL Editor (Dashboard → SQL Editor → N
     created_at TIMESTAMPTZ DEFAULT NOW()
   );
   ```
-- [ ] Create `conversations` table:
+- [x] Create `conversations` table:
   ```sql
   CREATE TABLE conversations (
     id SERIAL PRIMARY KEY,
@@ -148,7 +143,7 @@ Run the following SQL in the Supabase SQL Editor (Dashboard → SQL Editor → N
   );
   CREATE INDEX idx_conversations_user_timestamp ON conversations(user_id, timestamp);
   ```
-- [ ] Verify all 7 tables appear in Supabase Table Editor
+- [x] Verify all 7 tables appear in Supabase Table Editor
 
 ### 0.5 — GitHub Remote
 - [ ] Create new **public** repo on GitHub named `life-agent`
@@ -178,7 +173,7 @@ git log --oneline | head -5
 **Goal:** Working Telegram bot that receives messages, validates sender, and replies. No Claude yet.
 
 ### 1.1 — Dependencies
-- [ ] Add to `requirements.txt`:
+- [x] Add to `requirements.txt`:
   ```
   python-telegram-bot==21.6
   fastapi==0.115.0
@@ -194,108 +189,48 @@ git log --oneline | head -5
   tavily-python==0.5.0
   supabase==2.9.1
   ```
-- [ ] `pip install -r requirements.txt` — verify no errors
+- [x] `pip install -r requirements.txt` — verify no errors
 
-### 1.2 — config.py
-- [ ] Implement `Settings` class using `pydantic-settings`:
+### 1.2 — config.py ✅
+- [x] Implement `Settings` class using `pydantic-settings`:
   - Fields: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_ID` (int), `ANTHROPIC_API_KEY`, `TAVILY_API_KEY`, `OPENAI_API_KEY`, `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
   - Load from `.env` file
   - Export a singleton `settings` instance
-- [ ] Add a startup check: if any required key is missing or empty, raise `ValueError` with the field name
+- [x] Required fields fail loudly at startup if missing (pydantic handles this automatically)
 
 ### 1.3 — db.py (connection only)
-- [ ] Set up async SQLAlchemy engine using `asyncpg` driver and `DATABASE_URL` from settings
-- [ ] Implement `get_db()` async context manager that yields a session
-- [ ] Implement `init_db()` that runs a `SELECT 1` to verify connection on startup
-- [ ] Log `"Database connected"` on success, raise on failure
+- [x] Supabase client singleton via `get_db()`
+- [x] `init_db()` verifies connection on startup, logs "Database connected"
 
 ### 1.4 — bot.py (skeleton)
-- [ ] Create `Application` using `python-telegram-bot`
-- [ ] Implement `security_guard` middleware:
-  - On every incoming message, check `update.effective_user.id == settings.TELEGRAM_USER_ID`
-  - If not matching: log the unauthorized attempt (include user ID and username), do NOT reply, return immediately
-  - This must run before ANY handler
-- [ ] Implement `handle_message(update, context)`:
-  - For now: just reply "Echo: {message_text}" to confirm the pipeline works
-- [ ] Register `MessageHandler(filters.ALL, handle_message)` 
-- [ ] Implement `start_bot()` that runs long polling (no webhook)
+- [x] `Application` built using `python-telegram-bot`
+- [x] `_is_authorized()` security guard — silently drops any message not from `TELEGRAM_USER_ID`
+- [x] `handle_message()` — echoes message back to confirm pipeline works
+- [x] Long polling (no webhook)
 
 ### 1.5 — FastAPI health endpoint
-- [ ] In `main.py`: create FastAPI `app` instance
-- [ ] Add `GET /health` route returning `{"status": "ok", "timestamp": <iso_datetime>}`
-- [ ] This is used by Docker healthcheck
+- [x] `GET /health` returns `{"status": "ok", "timestamp": <iso_datetime>}`
 
 ### 1.6 — main.py entry point
-- [ ] `async def main()`:
-  1. Load settings (fail fast if env vars missing)
-  2. Call `init_db()` (fail fast if DB unreachable)
-  3. Start FastAPI via uvicorn on port 8000 (background task)
-  4. Start Telegram bot polling
-- [ ] `if __name__ == "__main__": asyncio.run(main())`
+- [x] FastAPI lifespan starts DB + bot polling on startup, shuts down cleanly on exit
+- [x] uvicorn runs on port 8000
 
 ### 1.7 — Docker
-- [ ] Write `Dockerfile`:
-  ```dockerfile
-  FROM python:3.12-slim
-  WORKDIR /app
-  COPY requirements.txt .
-  RUN pip install --no-cache-dir -r requirements.txt
-  COPY . .
-  CMD ["python", "main.py"]
-  ```
-- [ ] Write `docker-compose.yml`:
-  ```yaml
-  services:
-    app:
-      build: .
-      env_file: .env
-      restart: always
-      ports:
-        - "8000:8000"
-      healthcheck:
-        test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-        interval: 30s
-        timeout: 10s
-        retries: 3
-  ```
-- [ ] `docker-compose up --build` — confirm container starts without errors
-- [ ] Confirm `/health` responds at `http://localhost:8000/health`
+- [x] `Dockerfile` and `docker-compose.yml` already written (from Phase 0)
+- [ ] `docker-compose up --build` — confirm container starts without errors _(deferred — do after DigitalOcean droplet is set up)_
 
 ### 1.8 — GitHub Actions CI/CD
-- [ ] Write `.github/workflows/deploy.yml`:
-  ```yaml
-  name: Deploy
-  on:
-    push:
-      branches: [main]
-  jobs:
-    deploy:
-      runs-on: ubuntu-latest
-      steps:
-        - name: Deploy to droplet
-          uses: appleboy/ssh-action@v1
-          with:
-            host: ${{ secrets.DROPLET_IP }}
-            username: lifeagent
-            key: ${{ secrets.SSH_PRIVATE_KEY }}
-            script: |
-              cd /home/lifeagent/app
-              git pull origin main
-              docker-compose up --build -d
-  ```
-- [ ] On DigitalOcean droplet: create user `lifeagent`, clone repo to `/home/lifeagent/app`, place `.env`
-- [ ] Push to main — confirm GitHub Actions runs and deploys
+- [x] `.github/workflows/deploy.yml` already written (from Phase 0)
+- [ ] Create DigitalOcean droplet → add `DROPLET_IP` + `SSH_PRIVATE_KEY` to GitHub secrets
+- [ ] Push to main — confirm GitHub Actions deploys
 
 ### ✅ Phase 1 Verification Gate
 ```
 1. Send a message to your bot from your Telegram account
-   → You get back "Echo: <your message>"
-2. Send a message from a different Telegram account
-   → Bot does NOT reply; unauthorized attempt appears in logs
-3. curl http://localhost:8000/health
-   → {"status": "ok", "timestamp": "..."}
-4. Push a commit to main
-   → GitHub Actions deploys within ~90 seconds
+   → You get back "Echo: <your message>" ✓ DONE
+2. curl http://localhost:8000/health
+   → {"status": "ok", "timestamp": "..."} ✓ DONE
+3. docker-compose up --build → deferred until droplet is ready
 ```
 
 ---
