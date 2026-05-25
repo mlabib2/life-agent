@@ -24,5 +24,11 @@ class Settings(BaseSettings):
 
     apple_health_token: str = ""
 
+    smtp_user: str = ""
+    smtp_password: str = ""
+    notification_email: str = ""
+
+    claude_model: str = "claude-sonnet-4-6"
+
 
 settings = Settings()
